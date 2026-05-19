@@ -1,0 +1,6 @@
+pydantic
+scikit-learn
+pandas
+joblib
+fastapi[standard]
+psycopg2-binary
