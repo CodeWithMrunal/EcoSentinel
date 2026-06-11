@@ -4,3 +4,7 @@ __pycache__
 .env
 -d
 -H
+Test_Dataset
+dataset/Meter Management - EcoSEnter.xlsx
+dataset/fetch_meter_data.py
+meter_data_report.csv

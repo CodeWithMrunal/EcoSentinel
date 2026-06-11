@@ -101,6 +101,7 @@ HOURLY_LOAD_WEEKEND = np.array([
 ])
 
 # Noise std as fraction of mean load (±15% coefficient of variation)
+# This parameter controls how much randomness is added to the expected load for a given hour.
 LOAD_NOISE_CV = 0.15
 
 # =========================================================
@@ -111,11 +112,11 @@ LOAD_NOISE_CV = 0.15
 # Droop: each 1A of current causes ~0.05V drop (typical LV line)
 VOLTAGE_BASE_STD   = 2.0    # V  — slow background variation
 VOLTAGE_NOISE_STD  = 0.5    # V  — fast measurement noise
-VOLTAGE_DROOP_PER_AMP = 0.05  # V/A
+VOLTAGE_DROOP_PER_AMP = 0.05  # V/A - for calculating voltage drop under load
 
 # Power factor: load-dependent
 # Lighter loads (resistive) → higher PF; heavier loads → slightly lower
-PF_BASE            = 0.92
+PF_BASE            = 0.92 # remaining 0.08 is reactive component
 PF_LOAD_VARIATION  = 0.05   # PF range around base
 
 # Frequency: very stable grid (±0.05 Hz typical)
