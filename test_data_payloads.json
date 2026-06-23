@@ -1,24 +1,36 @@
 {
   "seeding_instructions": {
-    "important": "REQUIRED STEP: Seed these actual meters with baseline history BEFORE sending test payloads!",
+    "important": "REQUIRED STEP: Seed these meters with 48h baseline history BEFORE sending any test payload.",
     "seed_group_A": "python utils/seed_normal_history.py --meter SE2303001 SE2303062 SE2303064 --group group_A --hours 48 --before '2026-06-18 10:00:00'",
     "seed_group_B": "python utils/seed_normal_history.py --meter SE0000009 SE0000011 --group group_B --hours 48 --before '2026-06-18 10:00:00'",
     "seed_group_C": "python utils/seed_normal_history.py --meter SE1338167 SE2104744 --group group_C --hours 48 --before '2026-06-18 10:00:00'",
     "seed_group_D": "python utils/seed_normal_history.py --meter M1GEMAC1 M2GDDAC1 --group group_D --hours 48 --before '2026-06-18 10:00:00'",
     "seed_group_E": "python utils/seed_normal_history.py --meter SE000021 SE000022 --group group_E --hours 48 --before '2026-06-18 10:00:00'",
     "seed_group_V": "python utils/seed_normal_history.py --meter A0825001 A32600225 --group group_V --hours 48 --before '2026-06-18 10:00:00'",
-    "why_necessary": "Without baseline history, rolling_mean = current reading, rolling_std = 0, z_score = 0. Statistical layer cannot fire. Test data must represent FUTURE readings of meters with seeded history."
+    "why_necessary": "Without seeded history: rolling_mean = current reading, rolling_std = 0, z_score = 0. Statistical layer cannot fire. Test payloads represent FUTURE readings of seeded meters.",
+    "physics_note": "All test values are derived from the exact same physics as generate_dataset.py and seed_normal_history.py: E_wh = load_kw * 0.5 * 1000, I = (load_kw*1000)/(V*PF), with voltage droop V = 230 - I*0.05. At 10:00 weekday, base load = 0.70 kW -> E = 350 Wh, V = 229.83 V, I = 3.311 A."
   },
+
   "group_A_tests": {
-    "description": "group_A: energy + voltage + current + power_factor | Real meters: SE2303001, SE2303062, SE2303064",
-    "baseline_stats": {
-      "energy_consumption_wh": "~1.6 Wh per 30min (typical)",
-      "voltage_v": "~230 V",
-      "current_a": "~1.4 A",
-      "power_factor": "~0.92"
+    "description": "group_A: energy_consumption + voltage + current + power_factor. Real meters: SE2303001, SE2303062, SE2303064. OBIS: 1.0.1.29.0.255=energy(Wh), 1.0.12.27.0.255=voltage(V), 1.0.11.27.0.255=current(A), 1.0.13.27.0.255=PF.",
+    "baseline_physics": {
+      "timestamp": "2026-06-18 10:00:00 (Thursday, weekday)",
+      "diurnal_load_kw": 0.70,
+      "interval_hours": 0.5,
+      "energy_wh": "0.70 * 0.5 * 1000 = 350.0 Wh",
+      "current_a": "(0.70*1000) / (229.83 * 0.92) = 3.311 A",
+      "voltage_v": "230.0 - 3.311*0.05 = 229.83 V",
+      "rolling_mean_approx": "350 Wh",
+      "rolling_std_approx": "52 Wh (15% CV of mean)",
+      "zscore_3sigma_threshold": "350 + 3*52 = 506 Wh"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of SE2303001 at 2026-06-18 10:00:00, after 48h seeded history)",
+      "description": "Normal reading of SE2303001 at 10:00 after 48h seeded history. All layers should pass: no rule violation, z_score < 3.0, IF scores within normal range.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS (z ≈ 0.0)",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50001,
@@ -26,12 +38,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.5,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "zscore_spike": {
-      "description": "Energy spike to 6.2Wh (+287% above baseline), z_score > 3.0, triggers z-score layer",
+      "description": "Energy spike to 650 Wh on SE2303062. Rolling baseline ≈ 350 Wh mean, 52 Wh std. z = (650-350)/52 = 5.77, well above threshold of 3.0. Current rises proportionally with the increased load (same physics). Rule layer passes (no voltage/PF violation).",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "TRIGGERED (z ≈ 5.77, threshold 3.0)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50002,
@@ -39,12 +56,17 @@
           "timestamp": "2026-06-18T10:30:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:30:00,|2,1.0.12.27.0.255,2,230.2,V|3,1.0.1.29.0.255,2,6.2,Wh|4,1.0.11.27.0.255,2,5.8,A|5,1.0.13.27.0.255,2,0.91,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:30:00,|2,1.0.12.27.0.255,2,229.7,V|3,1.0.1.29.0.255,2,650.0,Wh|4,1.0.11.27.0.255,2,6.15,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "zscore_drop": {
-      "description": "Energy near-zero (0.05Wh), sudden drop from baseline ~1.6Wh, triggers z-score layer",
+      "description": "Sudden energy drop to 15 Wh on SE2303064. z = (15-350)/52 = -6.44, well below -3.0. Current drops proportionally (minimal load). Could indicate connection fault, disconnection, or tamper. Rule layer passes (positive energy, voltage/PF normal).",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "TRIGGERED (z ≈ -6.44, threshold -3.0)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50003,
@@ -52,12 +74,17 @@
           "timestamp": "2026-06-18T11:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 3,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 11:00:00,|2,1.0.12.27.0.255,2,230.1,V|3,1.0.1.29.0.255,2,0.05,Wh|4,1.0.11.27.0.255,2,0.04,A|5,1.0.13.27.0.255,2,0.90,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 11:00:00,|2,1.0.12.27.0.255,2,230.0,V|3,1.0.1.29.0.255,2,15.0,Wh|4,1.0.11.27.0.255,2,0.14,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "same_hour_deviation": {
-      "description": "Same timestamp hour (10:00) but energy 75% above historical avg for this hour, triggers same-hour deviation (>40%)",
+      "description": "Energy 525 Wh on SE2303001. Historical avg same hour ≈ 350 Wh. Deviation = (525-350)/350 = 50%, above the 40% threshold. z = (525-350)/52 = 3.37, also above z-score threshold. Both statistical triggers fire. Rule layer passes.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "TRIGGERED (z ≈ 3.37 AND same_hour_deviation = 50% > 40%)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50004,
@@ -65,12 +92,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 4,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.3,V|3,1.0.1.29.0.255,2,2.8,Wh|4,1.0.11.27.0.255,2,2.6,A|5,1.0.13.27.0.255,2,0.91,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,525.0,Wh|4,1.0.11.27.0.255,2,4.97,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "voltage_sag": {
-      "description": "Voltage 175V (below 180V minimum), triggers rule-based violation",
+      "description": "Voltage sag to 165 V on SE2303062 (below rule threshold of 180 V). Same active power (350 Wh) at lower voltage requires higher current: I = 700W / (165V * 0.92) = 4.61 A. This correlated current rise is the physical signature of a sag event.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (VOLTAGE_SAG: 165 V < 180 V threshold)",
+        "z_score": "PASS (energy unchanged)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50005,
@@ -78,12 +110,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 5,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,175.2,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,165.0,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,4.61,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "voltage_swell": {
-      "description": "Voltage 275V (above 270V maximum), triggers rule-based violation",
+      "description": "Voltage swell to 278 V on SE2303064 (above rule threshold of 270 V). Same active power at higher voltage means lower current: I = 700W / (278V * 0.92) = 2.74 A. Typically caused by capacitor bank switching or load shedding.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (VOLTAGE_SWELL: 278 V > 270 V threshold)",
+        "z_score": "PASS (energy unchanged)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50006,
@@ -91,12 +128,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 6,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,275.8,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,278.0,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,2.74,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "negative_energy": {
-      "description": "Negative energy (-1.2Wh), meter tamper indicator, triggers rule-based violation",
+      "description": "Negative energy on SE2303001 (-350 Wh). Indicates CT reversal, meter register rollover, or physical tampering. Current remains positive (current still flows). Rule fires immediately on sign check regardless of history.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (NEGATIVE_ENERGY: -350 Wh < 0)",
+        "z_score": "TRIGGERED (z far below -3.0)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50007,
@@ -104,12 +146,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 7,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.1,V|3,1.0.1.29.0.255,2,-1.2,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,-350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     },
     "power_factor_invalid": {
-      "description": "Power factor 1.05 (>1.0, physically impossible), triggers rule-based violation",
+      "description": "Power factor 1.05 on SE2303062 (above pf_max = 1.0 in settings.py). Physically impossible: PF cannot exceed 1.0. Indicates a meter firmware error or hardware fault. Rule fires immediately on bounds check.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (INVALID_PF: 1.05 > pf_max 1.0)",
+        "z_score": "PASS (energy and current unchanged)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50008,
@@ -117,12 +164,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 8,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.1,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,1.05,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,1.05,"
         }
       ]
     },
     "power_factor_collapse": {
-      "description": "Power factor 0.65 (below 0.75 threshold), triggers rule-based violation",
+      "description": "PF collapse to 0.65 on SE2303064. pf_min in settings.py = 0.0, so rule layer does NOT fire (0.65 > 0.0). This is purely an Isolation Forest / statistical anomaly. Active energy is unchanged (350 Wh); apparent energy rises to 538.5 VAh (S = P/PF = 700/0.65). Current rises to 4.69 A due to increased reactive component. The unusual E/I/PF combination is what the IF model detects.",
+      "expected_layer_result": {
+        "rule_based": "PASS (pf_min=0.0, pf_max=1.0 in settings.py — 0.65 is within bounds)",
+        "z_score": "PASS (energy unchanged, current z-score may trigger depending on current rolling std)",
+        "isolation_forest": "LIKELY TRIGGERED (trained on pf_collapse anomaly type at 0.55-0.72 range)"
+      },
       "records": [
         {
           "id": 50009,
@@ -130,19 +182,81 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 9,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.1,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.65,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,4.69,A|5,1.0.13.27.0.255,2,0.65,"
+        }
+      ]
+    },
+    "tamper_bypass": {
+      "description": "Tamper bypass on SE2303001. Energy suppressed to 30% of expected: 105 Wh (bypass routes current around the meter CT). Current stays at full expected level and is slightly elevated (3.64 A vs 3.31 A normal) due to bypass inefficiency. Unusual E/I ratio is the IF signature: low energy with high current is physically inconsistent for a legitimate meter.",
+      "expected_layer_result": {
+        "rule_based": "PASS (energy is positive, no voltage/PF violation)",
+        "z_score": "TRIGGERED (z = (105-350)/52 = -4.7 on energy)",
+        "isolation_forest": "LIKELY TRIGGERED (tamper_bypass in training data — low E + full I pattern)"
+      },
+      "records": [
+        {
+          "id": 50010,
+          "meterSerial": "SE2303001",
+          "timestamp": "2026-06-18T10:00:00+00:00",
+          "obisCode": "1.0.99.1.0.255",
+          "entryId": 10,
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,105.0,Wh|4,1.0.11.27.0.255,2,3.64,A|5,1.0.13.27.0.255,2,0.92,"
+        }
+      ]
+    },
+    "sustained_zero": {
+      "description": "Sustained zero consumption on SE2303062. Energy = 0 Wh, Current = 0 A, Voltage remains (grid connected but no load or meter disconnected). The zero_consumption_window rule requires 3+ consecutive zero readings to fire. Send this payload 3 times in sequence to trigger the window check.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED after 3 consecutive zero readings (zero_consumption_window = 3)",
+        "z_score": "TRIGGERED (z = (0-350)/52 = -6.73)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
+      "records": [
+        {
+          "id": 50011,
+          "meterSerial": "SE2303062",
+          "timestamp": "2026-06-18T10:00:00+00:00",
+          "obisCode": "1.0.99.1.0.255",
+          "entryId": 11,
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,0.0,Wh|4,1.0.11.27.0.255,2,0.0,A|5,1.0.13.27.0.255,2,0.92,"
+        },
+        {
+          "id": 50012,
+          "meterSerial": "SE2303062",
+          "timestamp": "2026-06-18T10:30:00+00:00",
+          "obisCode": "1.0.99.1.0.255",
+          "entryId": 12,
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:30:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,0.0,Wh|4,1.0.11.27.0.255,2,0.0,A|5,1.0.13.27.0.255,2,0.92,"
+        },
+        {
+          "id": 50013,
+          "meterSerial": "SE2303062",
+          "timestamp": "2026-06-18T11:00:00+00:00",
+          "obisCode": "1.0.99.1.0.255",
+          "entryId": 13,
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 11:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,0.0,Wh|4,1.0.11.27.0.255,2,0.0,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     }
   },
+
   "group_V_tests": {
-    "description": "group_V: voltage + current only (no energy) | Real meters: A0825001, A32600225",
-    "baseline_stats": {
-      "voltage_v": "~230 V",
-      "current_a": "~1.4 A"
+    "description": "group_V: voltage + current only (no energy). OBIS: 1.0.12.27.0.255=voltage(V), 1.0.11.27.0.255=current(A). Real meters: A0825001, A32600225. Rolling statistics computed on current as the primary series (energy absent).",
+    "baseline_physics": {
+      "load_kw": 0.70,
+      "voltage_v": "230 - (3.311*0.05) = 229.83 V",
+      "current_a": "(0.70*1000) / (229.83*0.92) = 3.311 A",
+      "rolling_mean_current_approx": "3.3 A",
+      "rolling_std_current_approx": "0.5 A",
+      "zscore_3sigma_threshold_current": "3.3 + 3*0.5 = 4.8 A"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of A0825001 after seeded history)",
+      "description": "Normal reading of A0825001 after seeded history. Voltage and current within expected range.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50101,
@@ -150,12 +264,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.4,V|3,1.0.11.27.0.255,2,1.40,A"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.11.27.0.255,2,3.31,A"
         }
       ]
     },
     "current_spike": {
-      "description": "Current spike to 5.0A (from ~1.4A baseline), z_score > 3.0, triggers z-score layer",
+      "description": "Current spike to 11.59 A on A32600225 (3.5× normal 3.31 A). Voltage sags due to droop: V = 230 - 11.59*0.05 = 229.42 V. z_current = (11.59-3.31)/0.5 >> 3.0. Consistent with a sudden large inductive load connection.",
+      "expected_layer_result": {
+        "rule_based": "PASS (voltage 229.4 V is within 180-270 V bounds)",
+        "z_score": "TRIGGERED (current z >> 3.0)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50102,
@@ -163,18 +282,45 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.2,V|3,1.0.11.27.0.255,2,5.0,A"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.4,V|3,1.0.11.27.0.255,2,11.59,A"
+        }
+      ]
+    },
+    "voltage_sag": {
+      "description": "Voltage sag to 165 V on A0825001 (below 180 V threshold). Current rises correspondingly at the same power level.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (VOLTAGE_SAG: 165 V < 180 V)",
+        "z_score": "PASS (current may vary within range)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
+      "records": [
+        {
+          "id": 50103,
+          "meterSerial": "A0825001",
+          "timestamp": "2026-06-18T10:30:00+00:00",
+          "obisCode": "1.0.99.1.0.255",
+          "entryId": 3,
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:30:00,|2,1.0.12.27.0.255,2,165.0,V|3,1.0.11.27.0.255,2,4.61,A"
         }
       ]
     }
   },
+
   "group_E_tests": {
-    "description": "group_E: energy consumption only | Real meters: SE000021, SE000022",
-    "baseline_stats": {
-      "energy_consumption_wh": "~1.6 Wh per 30min (typical)"
+    "description": "group_E: energy_consumption only. OBIS: 1.0.1.29.0.255=energy(Wh). Real meters: SE000021, SE000022. Rolling statistics and z-score computed solely on energy.",
+    "baseline_physics": {
+      "load_kw": 0.70,
+      "energy_wh": "0.70 * 0.5 * 1000 = 350.0 Wh",
+      "rolling_mean_approx": "350 Wh",
+      "rolling_std_approx": "52 Wh"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of SE000021 after seeded history)",
+      "description": "Normal energy reading of SE000021 after seeded history.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50201,
@@ -182,12 +328,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,1.6,Wh"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,350.0,Wh"
         }
       ]
     },
     "energy_spike": {
-      "description": "Energy spike to 5.2Wh (+325% above baseline), z_score > 3.0, triggers z-score layer",
+      "description": "Energy spike to 650 Wh on SE000022. z = (650-350)/52 = 5.77, well above 3.0 threshold.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "TRIGGERED (z ≈ 5.77)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50202,
@@ -195,12 +346,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,5.2,Wh"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,650.0,Wh"
         }
       ]
     },
     "negative_energy": {
-      "description": "Negative energy (-0.8Wh), meter tamper indicator, triggers rule-based violation",
+      "description": "Negative energy on SE000021 (-350 Wh). Rule fires immediately on sign check.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (NEGATIVE_ENERGY)",
+        "z_score": "TRIGGERED (z far below -3.0)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50203,
@@ -208,20 +364,28 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 3,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,-0.8,Wh"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,-350.0,Wh"
         }
       ]
     }
   },
+
   "group_B_tests": {
-    "description": "group_B: energy + apparent energy + voltage | Real meters: SE0000009, SE0000011",
-    "baseline_stats": {
-      "energy_consumption_wh": "~1.6 Wh per 30min",
-      "apparent_import_energy_vah": "~1.75 VAh per 30min",
-      "voltage_v": "~230 V"
+    "description": "group_B: energy_consumption + apparent_import_energy + voltage. OBIS: 1.0.1.29.0.255=energy(Wh), 1.0.9.29.0.255=apparent_energy(VAh), 1.0.12.27.0.255=voltage(V). Real meters: SE0000009, SE0000011.",
+    "baseline_physics": {
+      "load_kw": 0.70,
+      "pf": 0.92,
+      "energy_wh": "350.0 Wh",
+      "apparent_energy_vah": "S * 0.5h * 1000 = (0.70/0.92) * 500 = 380.4 VAh",
+      "voltage_v": "229.83 V"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of SE0000009 after seeded history)",
+      "description": "Normal reading of SE0000009 after seeded history.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50301,
@@ -229,12 +393,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.3,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.9.29.0.255,2,1.75,VAh"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.9.29.0.255,2,380.4,VAh"
         }
       ]
     },
-    "energy_anomaly": {
-      "description": "Energy spike to 4.8Wh with voltage sag to 175V, triggers both rule-based (sag) and z-score layers",
+    "energy_spike_with_voltage_sag": {
+      "description": "Combined anomaly on SE0000011: energy spike to 650 Wh (z ≈ 5.77) AND voltage sag to 165 V. Apparent energy rises proportionally with the spike (706.5 VAh). The voltage sag triggers rule layer independently. This payload tests two simultaneous anomaly signals.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (VOLTAGE_SAG: 165 V < 180 V)",
+        "z_score": "TRIGGERED (energy z ≈ 5.77)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50302,
@@ -242,19 +411,26 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,175.1,V|3,1.0.1.29.0.255,2,4.8,Wh|4,1.0.9.29.0.255,2,5.2,VAh"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,165.0,V|3,1.0.1.29.0.255,2,650.0,Wh|4,1.0.9.29.0.255,2,706.5,VAh"
         }
       ]
     }
   },
+
   "group_C_tests": {
-    "description": "group_C: energy + current only | Real meters: SE1338167, SE2104744",
-    "baseline_stats": {
-      "energy_consumption_wh": "~1.6 Wh per 30min",
-      "current_a": "~1.4 A"
+    "description": "group_C: energy_consumption + current only. OBIS: 1.0.1.29.0.255=energy(Wh), 1.0.11.27.0.255=current(A). Real meters: SE1338167, SE2104744.",
+    "baseline_physics": {
+      "load_kw": 0.70,
+      "energy_wh": "350.0 Wh",
+      "current_a": "3.311 A"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of SE1338167 after seeded history)",
+      "description": "Normal reading of SE1338167 after seeded history.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50401,
@@ -262,12 +438,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,1.6,Wh|3,1.0.11.27.0.255,2,1.40,A"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,350.0,Wh|3,1.0.11.27.0.255,2,3.31,A"
         }
       ]
     },
-    "current_spike": {
-      "description": "Current spike to 4.8A with energy increase, z_score > 3.0, triggers z-score layer",
+    "energy_and_current_spike": {
+      "description": "Correlated energy+current spike on SE2104744. Energy to 650 Wh, current to 6.15 A (both rise proportionally as they should for a real load increase). z-score on energy = 5.77. The correlated rise across both features makes the IF more confident.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "TRIGGERED (energy z ≈ 5.77)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50402,
@@ -275,22 +456,31 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,4.8,Wh|3,1.0.11.27.0.255,2,4.8,A"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.1.29.0.255,2,650.0,Wh|3,1.0.11.27.0.255,2,6.15,A"
         }
       ]
     }
   },
+
   "group_D_tests": {
-    "description": "group_D: full feature set including frequency | Real meters: M1GEMAC1, M2GDDAC1",
-    "baseline_stats": {
-      "energy_consumption_wh": "~1.6 Wh per 30min",
-      "voltage_v": "~230 V",
-      "current_a": "~1.4 A",
-      "power_factor": "~0.92",
-      "frequency_hz": "~50.0 Hz"
+    "description": "group_D: full feature set. OBIS: 1.0.1.29.0.255=energy(Wh), 1.0.2.29.0.255=export_energy(Wh), 1.0.9.29.0.255=apparent_energy(VAh), 1.0.12.27.0.255=voltage(V), 1.0.11.27.0.255=current(A), 1.0.13.27.0.255=PF, 1.0.14.27.0.255=frequency(Hz). Real meters: M1GEMAC1, M2GDDAC1.",
+    "baseline_physics": {
+      "load_kw": 0.70,
+      "energy_wh": "350.0 Wh",
+      "apparent_energy_vah": "380.4 VAh",
+      "export_energy_wh": "~5.0 Wh (small, exponential distributed)",
+      "voltage_v": "229.83 V",
+      "current_a": "3.311 A",
+      "power_factor": 0.92,
+      "frequency_hz": "50.0 ± 0.04 Hz"
     },
     "normal": {
-      "description": "Normal baseline reading (future reading of M1GEMAC1 after seeded history)",
+      "description": "Normal full-feature reading of M1GEMAC1 after seeded history.",
+      "expected_layer_result": {
+        "rule_based": "PASS",
+        "z_score": "PASS",
+        "isolation_forest": "PASS"
+      },
       "records": [
         {
           "id": 50501,
@@ -298,12 +488,17 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.2,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,|6,1.0.2.29.0.255,2,0.02,Wh|7,1.0.14.27.0.255,2,50.02,Hz"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,|6,1.0.2.29.0.255,2,5.0,Wh|7,1.0.9.29.0.255,2,380.4,VAh|8,1.0.14.27.0.255,2,50.01,Hz"
         }
       ]
     },
     "frequency_anomaly": {
-      "description": "Frequency drops to 48.5Hz (outside 49-51Hz safe range), triggers rule-based violation",
+      "description": "Frequency drops to 48.3 Hz on M2GDDAC1 (below 49 Hz safe lower bound). All other parameters remain normal. Indicates grid instability or islanding condition.",
+      "expected_layer_result": {
+        "rule_based": "TRIGGERED (FREQUENCY_OUT_OF_RANGE: 48.3 Hz outside 49-51 Hz)",
+        "z_score": "PASS (energy unchanged)",
+        "isolation_forest": "LIKELY TRIGGERED"
+      },
       "records": [
         {
           "id": 50502,
@@ -311,51 +506,64 @@
           "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.2,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,|6,1.0.2.29.0.255,2,0.02,Wh|7,1.0.14.27.0.255,2,48.5,Hz"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,|6,1.0.2.29.0.255,2,5.0,Wh|7,1.0.9.29.0.255,2,380.4,VAh|8,1.0.14.27.0.255,2,48.3,Hz"
         }
       ]
     }
   },
+
   "batch_request_example": {
-    "description": "Example batch POST /detect request with multiple anomalies from different meters",
+    "description": "Example batch POST /detect with one normal + one energy spike + one voltage sag across three group_A meters. All seeded before '2026-06-18 12:00:00' to use different timestamps.",
+    "seeding_note": "If using 12:00 timestamps, re-seed with --before '2026-06-18 12:00:00'. At 12:00 weekday, diurnal load = 0.60 kW -> E = 300 Wh. Adjust or keep --before '2026-06-18 10:00:00' and ensure batch timestamps are after 10:00.",
     "curl_command": "curl -X POST http://localhost:8000/detect -H 'Content-Type: application/json' -d @batch_payload.json",
     "payload": {
       "records": [
         {
           "id": 60001,
           "meterSerial": "SE2303001",
-          "timestamp": "2026-06-18T12:00:00+00:00",
+          "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 1,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 12:00:00,|2,1.0.12.27.0.255,2,230.1,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.40,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,"
         },
         {
           "id": 60002,
           "meterSerial": "SE2303062",
-          "timestamp": "2026-06-18T12:00:00+00:00",
+          "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 2,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 12:00:00,|2,1.0.12.27.0.255,2,230.2,V|3,1.0.1.29.0.255,2,5.8,Wh|4,1.0.11.27.0.255,2,5.6,A|5,1.0.13.27.0.255,2,0.91,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.7,V|3,1.0.1.29.0.255,2,650.0,Wh|4,1.0.11.27.0.255,2,6.15,A|5,1.0.13.27.0.255,2,0.92,"
         },
         {
           "id": 60003,
           "meterSerial": "SE2303064",
-          "timestamp": "2026-06-18T12:00:00+00:00",
+          "timestamp": "2026-06-18T10:00:00+00:00",
           "obisCode": "1.0.99.1.0.255",
           "entryId": 3,
-          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 12:00:00,|2,1.0.12.27.0.255,2,175.5,V|3,1.0.1.29.0.255,2,1.5,Wh|4,1.0.11.27.0.255,2,1.38,A|5,1.0.13.27.0.255,2,0.92,"
+          "rawValue": "1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,165.0,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,4.61,A|5,1.0.13.27.0.255,2,0.92,"
         }
       ]
     }
   },
+
   "testing_notes": {
     "critical_workflow": [
-      "1. SEED BASELINE: Run ALL seeding commands at the top of this file for each capability group. Use --before '2026-06-18 10:00:00' so history ends when test data begins.",
-      "2. WAIT: Give database ~2-3 seconds to commit seeded history before sending test payloads.",
-      "3. SEND TEST: Use /detect endpoint with records from the test sections below. Each record is a FUTURE reading of a seeded meter.",
-      "4. OBSERVE LOGS: Check terminal running uvicorn for per-stage timing and trigger reasons.",
-      "Without seeded history, rolling_mean = current reading, rolling_std = 0, z_score = 0. Statistical layer cannot fire!"
+      "1. SEED BASELINE: Run ALL seeding commands at the top of this file. Use --before '2026-06-18 10:00:00'. This plants 48h of 30-min readings ending just before the first test payload timestamp.",
+      "2. WAIT: Allow 2-3s for the DB commits to complete before POSTing.",
+      "3. SEND TEST: POST records from the relevant test group. Each record is a future reading of a seeded meter.",
+      "4. OBSERVE LOGS: Check uvicorn terminal for per-layer trigger reasons and z-score values."
     ],
+    "physics_reference": {
+      "formula_energy": "E_wh = load_kw * interval_hours * 1000  (interval_hours=0.5)",
+      "formula_current": "I = (load_kw * 1000) / (V * PF)",
+      "formula_voltage_droop": "V_actual = 230.0 - I * 0.05",
+      "formula_apparent_energy": "Ea_vah = (load_kw / PF) * interval_hours * 1000",
+      "hour_10_weekday_load": "0.70 kW  (from HOURLY_LOAD_WEEKDAY[10])",
+      "normal_energy_at_hour_10": "350.0 Wh",
+      "normal_current_at_hour_10": "3.311 A",
+      "normal_voltage_at_hour_10": "229.83 V",
+      "normal_apparent_energy_at_hour_10": "380.4 VAh"
+    },
     "seeding_summary": {
       "group_A": "SE2303001, SE2303062, SE2303064",
       "group_B": "SE0000009, SE0000011",
@@ -365,21 +573,32 @@
       "group_V": "A0825001, A32600225"
     },
     "layer_triggers": {
-      "rule_based": "Voltage sag (<180V) or swell (>270V), negative energy, invalid power factor (>1.0 or <0.75), frequency out of range (49-51Hz)",
-      "zscore": "Reading is 3+ standard deviations from rolling baseline (uses historical window only), OR same-hour deviation > 40%",
-      "isolation_forest": "Complex multivariate anomalies detected by trained ML model (requires model artifacts in models/ directory)"
+      "rule_based": {
+        "VOLTAGE_SAG":       "voltage < 180.0 V  (DETECTION_CONFIG voltage_min)",
+        "VOLTAGE_SWELL":     "voltage > 270.0 V  (DETECTION_CONFIG voltage_max)",
+        "NEGATIVE_ENERGY":   "energy_consumption < 0",
+        "INVALID_PF":        "power_factor > 1.0  (pf_max=1.0) OR power_factor < 0.0  (pf_min=0.0)",
+        "FREQ_OUT_OF_RANGE": "frequency outside 49-51 Hz  (group_D only)",
+        "SUSTAINED_ZERO":    "3+ consecutive readings with energy=0 (zero_consumption_window=3)",
+        "note":              "PF collapse to 0.65 does NOT trigger rule layer (pf_min=0.0 in settings.py). It is a purely ML/statistical anomaly."
+      },
+      "z_score": "|(reading - rolling_mean) / rolling_std| > 3.0  OR  |(reading - hist_avg_same_hour) / hist_avg_same_hour| > 0.40",
+      "isolation_forest": "Complex multivariate anomalies — trained on all 8 anomaly types in generate_dataset.py at correct Wh scale"
     },
     "curl_examples": [
-      "Single normal: curl -X POST http://localhost:8000/detect -H 'Content-Type: application/json' -d '{\"records\": [{\"id\": 50001, \"meterSerial\": \"SE2303001\", \"timestamp\": \"2026-06-18T10:00:00+00:00\", \"obisCode\": \"1.0.99.1.0.255\", \"entryId\": 1, \"rawValue\": \"1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,230.5,V|3,1.0.1.29.0.255,2,1.6,Wh|4,1.0.11.27.0.255,2,1.42,A|5,1.0.13.27.0.255,2,0.92,\"}]}'",
-      "Spike (should fire z-score): Use SE2303062 zscore_spike payload from group_A_tests",
-      "Voltage sag (should fire rule-based): Use SE2303062 voltage_sag payload from group_A_tests",
-      "Check logs: tail -f or monitor terminal running 'uvicorn api.main:app --reload'"
+      "Single normal (should pass all layers): curl -X POST http://localhost:8000/detect -H 'Content-Type: application/json' -d '{\"records\": [{\"id\": 50001, \"meterSerial\": \"SE2303001\", \"timestamp\": \"2026-06-18T10:00:00+00:00\", \"obisCode\": \"1.0.99.1.0.255\", \"entryId\": 1, \"rawValue\": \"1,0.0.1.0.0.255,2,2026-06-18 10:00:00,|2,1.0.12.27.0.255,2,229.8,V|3,1.0.1.29.0.255,2,350.0,Wh|4,1.0.11.27.0.255,2,3.31,A|5,1.0.13.27.0.255,2,0.92,\"}]}'",
+      "Energy spike (should fire z-score): Use group_A_tests.zscore_spike payload (SE2303062, E=650.0 Wh)",
+      "Voltage sag (should fire rule-based): Use group_A_tests.voltage_sag payload (SE2303062, V=165.0)",
+      "Tamper bypass (should fire z-score + IF): Use group_A_tests.tamper_bypass payload (E=105 Wh, I=3.64 A)"
     ],
     "expected_behavior": {
-      "normal_readings": "All three layers run, no anomalies detected. Baseline rolls forward.",
-      "z_score_spike": "Rule-based: OK. Z-score: TRIGGERED (reading 3+ σ from baseline). Isolation Forest: may trigger. Anomaly persisted with flagged_anomalous=TRUE.",
-      "voltage_sag": "Rule-based: TRIGGERED (VOLTAGE_SAG). Z-score: depends on magnitude. Isolation Forest: may trigger. Anomaly persisted.",
-      "same_hour_deviation": "Rule-based: OK. Z-score: TRIGGERED (SAME_HOUR_DEVIATION_EXCEEDED). Baseline stays clean (flag=FALSE for normal sameday)."
+      "normal_readings": "All three layers run. No anomaly flagged. flagged_anomalous=FALSE in DB. Baseline rolls forward.",
+      "zscore_spike": "Rule-based: PASS. Z-score: TRIGGERED. IF: likely triggered. flagged_anomalous=TRUE.",
+      "voltage_sag": "Rule-based: TRIGGERED. Z-score: PASS (energy normal). IF: likely triggered. flagged_anomalous=TRUE.",
+      "tamper_bypass": "Rule-based: PASS. Z-score: TRIGGERED (energy z=-4.7). IF: TRIGGERED (anomalous E/I ratio). flagged_anomalous=TRUE.",
+      "pf_collapse": "Rule-based: PASS. Z-score: PASS (energy unchanged). IF: TRIGGERED. flagged_anomalous=TRUE.",
+      "negative_energy": "Rule-based: TRIGGERED. Z-score: TRIGGERED. IF: TRIGGERED. All three fire.",
+      "power_factor_invalid": "Rule-based: TRIGGERED (PF > 1.0). Z-score: PASS. IF: TRIGGERED."
     }
   }
 }
