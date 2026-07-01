@@ -8,7 +8,7 @@ gracefully if a parameter is absent:
   - Energy absent  → delta, rolling_mean, z_score, spike_ratio,
                       historical_avg_* all become None
   - Voltage absent → voltage_deviation becomes None
-  - Current absent → current_delta becomes None
+  - Current absent → current_delta, current_z_score, current_spike_ratio become None
   - PF absent      → power_factor_deviation becomes None
 
 Time features (hour_of_day, day_of_week, is_weekend, holiday)
@@ -222,6 +222,14 @@ def summarize_rolling_state(
             float(np.mean(same_day_type_vals)) if same_day_type_vals else None
         )
 
+    # Ratio of current primary-series value to its typical same-hour value.
+    # Normalises for the diurnal load pattern: a 2am normal reading and a
+    # 10am normal reading both yield ~1.0; a 2× spike yields ~2.0 regardless
+    # of the hour. Defaults to 1.0 (neutral) when no same-hour history exists.
+    hourly_primary_ratio: float = 1.0
+    if primary_val is not None and historical_avg_same_hour is not None and historical_avg_same_hour > 1e-3:
+        hourly_primary_ratio = float(primary_val) / (historical_avg_same_hour + 1e-5)
+
     return {
         "hour_of_day": hour_of_day,
         "day_of_week": day_of_week,
@@ -238,6 +246,7 @@ def summarize_rolling_state(
         "spike_ratio": spike_ratio,
         "historical_avg_same_hour": historical_avg_same_hour,
         "historical_avg_same_day_type": historical_avg_same_day_type,
+        "hourly_primary_ratio": hourly_primary_ratio,
         "energy_consumption": energy,
         "voltage": voltage,
         "current": current,
@@ -297,6 +306,7 @@ def compute_features(
     spike_ratio = summary["spike_ratio"]
     historical_avg_same_hour = summary["historical_avg_same_hour"]
     historical_avg_same_day_type = summary["historical_avg_same_day_type"]
+    hourly_primary_ratio = summary["hourly_primary_ratio"]
 
     if primary_key is not None:
         logger.info(
@@ -308,10 +318,23 @@ def compute_features(
 
     # ── Optional derived features ─────────────────────────
     current_delta = None
+    current_z_score = None
+    current_spike_ratio = None
     if current is not None:
         prev_current = _last_canonical_value(history, "current")
         if prev_current is not None:
             current_delta = current - prev_current
+        if primary_key == "current":
+            # Primary rolling stats are already computed for current — reuse them
+            current_z_score = z_score
+            current_spike_ratio = spike_ratio
+        else:
+            # Compute separate rolling stats on current (secondary series)
+            current_series = _build_series(history, "current")
+            if current_series:
+                _, _, _, current_z_score, current_spike_ratio = _rolling_features(
+                    current_series, current
+                )
 
     voltage_deviation      = (voltage - NOMINAL_VOLTAGE) if voltage is not None else None
     power_factor_deviation = (1.0 - pf)                  if pf      is not None else None
@@ -335,8 +358,11 @@ def compute_features(
         "power_factor":                 _round_opt(pf),
         "apparent_import_energy":       _round_opt(app_e),
         "current_delta":                _round_opt(current_delta),
+        "current_z_score":              _round_opt(current_z_score),
+        "current_spike_ratio":          _round_opt(current_spike_ratio),
         "voltage_deviation":            _round_opt(voltage_deviation),
         "power_factor_deviation":       _round_opt(power_factor_deviation),
+        "hourly_primary_ratio":         _round_opt(hourly_primary_ratio),
     }
 
     # Ensure all ALL_FEATURES keys are present (None for missing)

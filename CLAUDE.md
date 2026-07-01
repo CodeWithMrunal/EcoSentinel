@@ -70,12 +70,16 @@ Each `POST /detect` request runs every record through **6 sequential stages**:
 
 1. **OBIS Parser** (`obis_parser.py`) — splits pipe-delimited `rawValue` into structured readings
 2. **Canonical Mapper** (`canonical_mapper.py`) — OBIS codes → canonical feature names (e.g., `voltage`, `energy_consumption`)
-3. **Feature Engineer** (`feature_engineer.py`) — computes 19 features including rolling stats from DB history (last 10 readings)
+3. **Feature Engineer** (`feature_engineer.py`) — computes rolling stats, `hourly_primary_ratio`, and per-parameter derived features. Primary series is energy if available, else current, else voltage.
 4. **Rule-Based Detection** (`rule_based.py`) — 7 deterministic rules (negative energy, voltage out-of-range, etc.)
 5. **Z-Score Detection** (`zscore_detector.py`) — fires on deviations > 3σ or > 4× ratio
 6. **Isolation Forest** (`if_detector.py`) — routes to one of 6 per-capability-group models or global fallback
 
 **Verdict rule:** `is_anomaly = True` if **any** layer fires (conservative; maximizes recall).
+
+### IF Feature Design
+
+The Isolation Forest is fed **time-normalised features** — specifically `hourly_primary_ratio` = primary_value / historical_avg_same_hour, plus raw absolute values and time features. `z_score`, `spike_ratio`, `current_z_score`, and `current_spike_ratio` are **excluded** from the IF feature set: with a 5-reading (2.5hr) rolling window, natural morning load ramp-ups produce z_scores of 15–20 for completely normal readings, while subtle anomalies only reach z_scores of 3–6. IF would treat the normal ramp-up as more isolatable (more anomalous) → ROC-AUC inverts below 0.5. `hourly_primary_ratio` avoids this by normalising against the same-hour historical average, yielding ≈ 1.0 for any normal reading regardless of time of day.
 
 ### Capability Group Model Routing
 
@@ -86,6 +90,10 @@ The backend has 6 Isolation Forest models (group_A through group_V), each traine
 - **No match** → global fallback with NaN imputation
 
 **Why per-group models?** A voltage-only meter imputed with a global median energy value would produce false anomaly signals. Group models are trained on clean data only.
+
+### Dataset & Training
+
+The synthetic training dataset uses a deterministic **`METER_ROSTER`** (72 meters: 12 per group × 6 groups) defined in `dataset/generate_dataset.py`. The first 2–3 meters of each group use the real test serials from `test_data_payloads.json`. Training uses a **stratified 80/20 split** — 10 train / 2 test meters per group — guaranteeing evaluation metrics for every group. Anomaly injection is capability-aware: if an injected anomaly has no visible effect on the meter's tracked parameters, it is relabeled as `"normal"` to prevent phantom training labels.
 
 ### Configuration — Single Source of Truth
 

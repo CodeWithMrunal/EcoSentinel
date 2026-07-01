@@ -51,6 +51,59 @@ from config.settings import (
 )
 
 # =========================================================
+# METER ROSTER
+# Deterministic assignment: 12 meters per group × 6 groups.
+# First slots use the real test serials from test_data_payloads.json
+# so those meters appear in training with the correct profile.
+# =========================================================
+
+# Unpack profiles by index — order matches METER_CAPABILITY_PROFILES
+_PA, _PB, _PC, _PD, _PE, _PV = METER_CAPABILITY_PROFILES  # A B C D E V
+
+METER_ROSTER: list[tuple[str, list]] = [
+    # ── group_A : energy + voltage + current + power_factor ──────
+    ("SE2303001", _PA), ("SE2303062", _PA), ("SE2303064", _PA),
+    ("GRP_A_004", _PA), ("GRP_A_005", _PA), ("GRP_A_006", _PA),
+    ("GRP_A_007", _PA), ("GRP_A_008", _PA), ("GRP_A_009", _PA),
+    ("GRP_A_010", _PA), ("GRP_A_011", _PA), ("GRP_A_012", _PA),
+    # ── group_B : energy + apparent_import_energy + voltage ──────
+    ("SE0000009", _PB), ("SE0000011", _PB),
+    ("GRP_B_003", _PB), ("GRP_B_004", _PB), ("GRP_B_005", _PB),
+    ("GRP_B_006", _PB), ("GRP_B_007", _PB), ("GRP_B_008", _PB),
+    ("GRP_B_009", _PB), ("GRP_B_010", _PB), ("GRP_B_011", _PB),
+    ("GRP_B_012", _PB),
+    # ── group_C : energy + current ───────────────────────────────
+    ("SE1338167", _PC), ("SE2104744", _PC),
+    ("GRP_C_003", _PC), ("GRP_C_004", _PC), ("GRP_C_005", _PC),
+    ("GRP_C_006", _PC), ("GRP_C_007", _PC), ("GRP_C_008", _PC),
+    ("GRP_C_009", _PC), ("GRP_C_010", _PC), ("GRP_C_011", _PC),
+    ("GRP_C_012", _PC),
+    # ── group_D : full feature set ───────────────────────────────
+    ("M1GEMAC1",  _PD), ("M2GDDAC1",  _PD),
+    ("GRP_D_003", _PD), ("GRP_D_004", _PD), ("GRP_D_005", _PD),
+    ("GRP_D_006", _PD), ("GRP_D_007", _PD), ("GRP_D_008", _PD),
+    ("GRP_D_009", _PD), ("GRP_D_010", _PD), ("GRP_D_011", _PD),
+    ("GRP_D_012", _PD),
+    # ── group_E : energy only ────────────────────────────────────
+    ("SE000021",  _PE), ("SE000022",  _PE),
+    ("GRP_E_003", _PE), ("GRP_E_004", _PE), ("GRP_E_005", _PE),
+    ("GRP_E_006", _PE), ("GRP_E_007", _PE), ("GRP_E_008", _PE),
+    ("GRP_E_009", _PE), ("GRP_E_010", _PE), ("GRP_E_011", _PE),
+    ("GRP_E_012", _PE),
+    # ── group_V : voltage + current only ─────────────────────────
+    ("A0825001",  _PV), ("A32600225", _PV),
+    ("GRP_V_003", _PV), ("GRP_V_004", _PV), ("GRP_V_005", _PV),
+    ("GRP_V_006", _PV), ("GRP_V_007", _PV), ("GRP_V_008", _PV),
+    ("GRP_V_009", _PV), ("GRP_V_010", _PV), ("GRP_V_011", _PV),
+    ("GRP_V_012", _PV),
+]
+
+assert len(METER_ROSTER) == DATASET_CONFIG["num_meters"], (
+    f"METER_ROSTER has {len(METER_ROSTER)} entries but num_meters="
+    f"{DATASET_CONFIG['num_meters']} — update one to match."
+)
+
+# =========================================================
 # SEED
 # =========================================================
 
@@ -121,6 +174,18 @@ PF_LOAD_VARIATION  = 0.05   # PF range around base
 
 # Frequency: very stable grid (±0.05 Hz typical)
 FREQ_STD           = 0.04   # Hz
+
+# Maps OBIS codes to the key they produce in the elec dict (from derive_electrical)
+# Used to determine which parameters a given meter actually tracks.
+_OBIS_TO_ELEC_KEY = {
+    "1.0.1.29.0.255":  "energy_consumption",
+    "1.0.12.27.0.255": "voltage",
+    "1.0.11.27.0.255": "current",
+    "1.0.13.27.0.255": "power_factor",
+    "1.0.9.29.0.255":  "apparent_energy",
+    "1.0.2.29.0.255":  "active_export_energy",
+    "1.0.14.27.0.255": "frequency",
+}
 
 # =========================================================
 # ANOMALY CATALOGUE
@@ -427,6 +492,13 @@ def _apply_anomaly(
             ratio = pf_base / max(pf_anom, 0.1)
             e["current"] = round(e["current"] * ratio, 3)
 
+    # If the anomaly had no visible effect on any parameter this meter tracks,
+    # relabel it as normal to avoid phantom training labels (e.g., "voltage_sag"
+    # labeled on an energy-only meter where voltage is never stored).
+    tracked = {_OBIS_TO_ELEC_KEY[c] for c in capability if c in _OBIS_TO_ELEC_KEY}
+    if not any(e.get(k) != elec.get(k) for k in tracked):
+        return elec, "normal"
+
     return e, anom_name
 
 
@@ -437,10 +509,7 @@ def _apply_anomaly(
 all_rows  = []
 global_id = 1
 
-for meter_idx in range(1, NUM_METERS + 1):
-
-    meter_serial = f"E{meter_idx:07d}"
-    capability   = random.choice(METER_CAPABILITY_PROFILES)
+for meter_serial, capability in METER_ROSTER:
 
     # Per-meter characteristics (fixed for the meter's lifetime)
     # Scale factor: 0.6–1.8 simulates different household sizes

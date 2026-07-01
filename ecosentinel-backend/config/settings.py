@@ -53,8 +53,8 @@ def group_model_paths(group_name: str) -> dict:
 # =========================================================
 
 DATASET_CONFIG = {
-    "num_meters":    10,
-    "days":          15,
+    "num_meters":    72,   # 12 per group × 6 groups
+    "days":          30,
     "freq_minutes":  30,
     "start_time":    "2026-01-01",
     "random_seed":   42,
@@ -236,17 +236,19 @@ CAPABILITY_GROUPS = {
 # =========================================================
 
 METER_CAPABILITY_PROFILES = [
-    # Profile A
+    # Profile A — energy + voltage + current + power_factor
     ["1.0.1.29.0.255", "1.0.12.27.0.255", "1.0.11.27.0.255", "1.0.13.27.0.255"],
-    # Profile B
+    # Profile B — energy + apparent_import_energy + voltage
     ["1.0.1.29.0.255", "1.0.9.29.0.255",  "1.0.12.27.0.255"],
-    # Profile C
+    # Profile C — energy + current
     ["1.0.1.29.0.255", "1.0.11.27.0.255"],
-    # Profile D
+    # Profile D — full feature set
     ["1.0.1.29.0.255", "1.0.2.29.0.255", "1.0.9.29.0.255",
      "1.0.12.27.0.255", "1.0.11.27.0.255", "1.0.13.27.0.255", "1.0.14.27.0.255"],
-    # Profile E
+    # Profile E — energy only
     ["1.0.1.29.0.255"],
+    # Profile V — voltage + current only (no energy; power quality meters)
+    ["1.0.12.27.0.255", "1.0.11.27.0.255"],
 ]
 
 # =========================================================
@@ -261,13 +263,7 @@ CORE_FEATURES = [
     "day_of_week",
     "is_weekend",
     "holiday",
-    "delta",
-    "rolling_mean",
-    "rolling_std",
-    "z_score",
-    "spike_ratio",
-    "historical_avg_same_hour",
-    "historical_avg_same_day_type",
+    "hourly_primary_ratio",
 ]
 
 OPTIONAL_FEATURES = [
@@ -275,7 +271,6 @@ OPTIONAL_FEATURES = [
     "current",
     "power_factor",
     "apparent_import_energy",
-    "current_delta",
     "voltage_deviation",
     "power_factor_deviation",
 ]
@@ -291,19 +286,18 @@ ALL_FEATURES = CORE_FEATURES + OPTIONAL_FEATURES
 # =========================================================
 
 DERIVED_FEATURE_MAP = {
-    # From energy_consumption
+    # From energy_consumption — only the hour-normalised ratio; short-window
+    # z_score and spike_ratio are excluded because the diurnal load pattern
+    # makes normal morning-ramp readings appear as extreme outliers (z≈20),
+    # causing IF to invert its anomaly scores (ROC-AUC < 0.5).
     "energy_consumption": [
-        "delta",
-        "rolling_mean",
-        "rolling_std",
-        "z_score",
-        "spike_ratio",
-        "historical_avg_same_hour",
-        "historical_avg_same_day_type",
+        "hourly_primary_ratio",
     ],
-    # From current
+    # From current — same hour-normalised ratio for groups without energy
+    # (e.g. group_V uses current as its primary series, so hourly_primary_ratio
+    # = current / historical_avg_same_hour_of_current).
     "current": [
-        "current_delta",
+        "hourly_primary_ratio",
     ],
     # From voltage
     "voltage": [
@@ -334,7 +328,7 @@ DETECTION_CONFIG = {
     "power_factor_min":        0.0,
     "power_factor_max":        1.0,
     "zero_consumption_window": 3,
-    "if_contamination":        0.05,
+    "if_contamination":        0.07,
     "rolling_window_size":     5,
 }
 

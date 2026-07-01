@@ -32,6 +32,7 @@ import json
 import numpy as np
 import pandas as pd
 import joblib
+from collections import defaultdict
 from datetime import datetime
 
 from sklearn.ensemble import IsolationForest
@@ -68,7 +69,7 @@ CSV_PATH = os.path.join(
 
 IF_PARAMS = {
     "n_estimators":  200,
-    "max_samples":   "auto",
+    "max_samples":   1024,   # "auto" caps at 256 regardless of dataset size
     "contamination": DETECTION_CONFIG["if_contamination"],
     "random_state":  42,
     "n_jobs":        -1,
@@ -81,6 +82,9 @@ OBIS_TO_CANONICAL = {
     for obis, meta in OBIS_REGISTRY.items()
     if not meta["is_timestamp"] and meta["canonical_name"] is not None
 }
+
+# All canonical feature names that can appear in meter data
+ALL_CANONICAL = frozenset(OBIS_TO_CANONICAL.values())
 
 # =========================================================
 # HELPERS
@@ -309,9 +313,14 @@ frames = []
 for meter, grp in df_features_eng.groupby("meter_serial"):
     frames.append(_engineer_features(grp))
 df_eng = pd.concat(frames, ignore_index=True)
-# Re-attach anomaly_type labels aligned by original index
+# Re-attach anomaly_type labels by key — positional assignment is wrong because
+# groupby sorts meters alphabetically while the CSV is in METER_ROSTER order.
 if "anomaly_type" in df_features.columns:
-    df_eng["anomaly_type"] = df_features["anomaly_type"].values
+    df_eng = df_eng.merge(
+        df_features[["meter_serial", "interval_timestamp", "anomaly_type"]],
+        on=["meter_serial", "interval_timestamp"],
+        how="left",
+    )
 print(f"        Engineered shape: {df_eng.shape}")
 
 # =========================================================
@@ -320,20 +329,50 @@ print(f"        Engineered shape: {df_eng.shape}")
 # temporal data leakage across the boundary.
 # =========================================================
 
-print(f"[ 3/5 ] Splitting meters 80/20 (train/test) ...")
+print(f"[ 3/5 ] Splitting meters (stratified 80/20 per capability group) ...")
 
-all_meters    = df_eng["meter_serial"].unique()
+all_meters = list(df_eng["meter_serial"].unique())
+
+# Map each meter to its exact capability group via canonical feature presence
+def _meter_canonical_features(meter_serial):
+    rows = df_eng[df_eng["meter_serial"] == meter_serial]
+    return frozenset(
+        col for col in ALL_CANONICAL
+        if col in rows.columns and rows[col].notna().any()
+    )
+
+meter_to_group: dict = {}
+for m in all_meters:
+    present = _meter_canonical_features(m)
+    for gname, graw in CAPABILITY_GROUPS.items():
+        if present == graw:
+            meter_to_group[m] = gname
+            break
+
+# Stratified split: take 20% of each group's meters for test
 np.random.seed(42)
-np.random.shuffle(all_meters)
-n_train       = max(1, int(len(all_meters) * TRAIN_RATIO))
-train_meters  = set(all_meters[:n_train])
-test_meters   = set(all_meters[n_train:])
+group_to_meters: dict = defaultdict(list)
+for m in all_meters:
+    group_to_meters[meter_to_group.get(m, "unknown")].append(m)
+
+train_meters: set = set()
+test_meters:  set = set()
+for g, meters in sorted(group_to_meters.items()):
+    meters_list = list(meters)
+    np.random.shuffle(meters_list)
+    n_test = max(1, int(len(meters_list) * (1 - TRAIN_RATIO)))
+    test_meters.update(meters_list[:n_test])
+    train_meters.update(meters_list[n_test:])
 
 df_train = df_eng[df_eng["meter_serial"].isin(train_meters)].copy()
 df_test  = df_eng[df_eng["meter_serial"].isin(test_meters)].copy()
 
 print(f"        Train: {len(df_train)} rows ({len(train_meters)} meters)")
-print(f"        Test : {len(df_test)}  rows ({len(test_meters)} meters)")
+print(f"        Test : {len(df_test)} rows ({len(test_meters)} meters)")
+for g in sorted(group_to_meters):
+    g_meters = group_to_meters[g]
+    print(f"        {g}: {sum(m in train_meters for m in g_meters)} train / "
+          f"{sum(m in test_meters for m in g_meters)} test")
 
 # Extract exact labels from anomaly_type column
 y_test_all = _reconstruct_labels(df_test)
@@ -352,26 +391,9 @@ for group_name, raw_features in CAPABILITY_GROUPS.items():
 
     feature_list = _group_feature_list(raw_features)
 
-    # ── Filter training rows: only meters whose canonical features
-    #    exactly match this group's raw features ──────────────────
-    def _meter_matches_group(meter_serial, group_raw):
-        meter_rows = df_train[df_train["meter_serial"] == meter_serial]
-        if meter_rows.empty:
-            return False
-        # A meter matches a group if all its group features are non-null
-        # and it has no extra raw canonical features beyond the group
-        present = frozenset(
-            col for col in group_raw
-            if col in meter_rows.columns and meter_rows[col].notna().any()
-        )
-        return present == group_raw
-
-    matching_train_meters = [
-        m for m in train_meters if _meter_matches_group(m, raw_features)
-    ]
-    matching_test_meters = [
-        m for m in test_meters if _meter_matches_group(m, raw_features)
-    ]
+    # ── Filter training rows: use pre-computed exact group assignments ──
+    matching_train_meters = [m for m in train_meters if meter_to_group.get(m) == group_name]
+    matching_test_meters  = [m for m in test_meters  if meter_to_group.get(m) == group_name]
 
     if not matching_train_meters:
         print(f"\n  ── {group_name} ── SKIPPED (no matching training meters)")
