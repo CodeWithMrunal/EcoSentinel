@@ -1,8 +1,23 @@
+# EcoSentinel backend dependencies
+# Install from the repo root:  pip install -r requirements.txt
+
+# ── API server ───────────────────────────────
+fastapi[standard]
+uvicorn
 pydantic
+
+# ── ML / data ────────────────────────────────
 scikit-learn
 pandas
+numpy
 joblib
-fastapi[standard]
+
+# ── Database ─────────────────────────────────
 psycopg2-binary
+
+# ── LLM decision engine (provider-agnostic) ──
+litellm
+
+# ── Config ───────────────────────────────────
 python-dotenv
-uvicorn
+</content>
