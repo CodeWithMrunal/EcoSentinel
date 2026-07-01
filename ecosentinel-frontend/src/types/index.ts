@@ -106,6 +106,8 @@ export interface HealthResponse {
   status: 'ok' | 'degraded';
   timestamp: string;
   components: HealthComponents;
+  llm_model?: string;
+  llm_provider?: string;
 }
 
 export interface ModelInfoResponse {

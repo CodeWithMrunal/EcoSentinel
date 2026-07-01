@@ -18,18 +18,12 @@ import type {
   MeterFormState,
 } from '@/types';
 
-import { LLM_MODEL_GROUPS } from '@/constants/config';
-
-// Default LLM model is the first available Ollama model
-const DEFAULT_LLM_MODEL = LLM_MODEL_GROUPS[0].models[0].value;
-
 // ── State shape ───────────────────────────────────────────────
 
 interface AppState {
   // ── Global UI preferences (persisted to localStorage) ──────
   viewMode:               ViewMode;
   decisionEngineEnabled:  boolean;
-  selectedLLMModel:       string;
 
   // ── Detection slice ─────────────────────────────────────────
   detection: {
@@ -63,7 +57,6 @@ interface AppActions {
   // Global
   setViewMode:              (mode: ViewMode) => void;
   setDecisionEngineEnabled: (enabled: boolean) => void;
-  setSelectedLLMModel:      (model: string) => void;
 
   // Detection
   setDetectionLoading:    (loading: boolean) => void;
@@ -136,7 +129,6 @@ export const useAppStore = create<AppState & AppActions>()(
       // ── Initial state ──────────────────────────────────────
       viewMode:              'technical',
       decisionEngineEnabled: true,
-      selectedLLMModel:      DEFAULT_LLM_MODEL,
       detection:             initialDetection,
       explanation:           initialExplanation,
       meterForm:             initialMeterForm,
@@ -144,7 +136,6 @@ export const useAppStore = create<AppState & AppActions>()(
       // ── Global actions ──────────────────────────────────────
       setViewMode: (mode) => set((s) => { s.viewMode = mode; }),
       setDecisionEngineEnabled: (enabled) => set((s) => { s.decisionEngineEnabled = enabled; }),
-      setSelectedLLMModel: (model) => set((s) => { s.selectedLLMModel = model; }),
 
       // ── Detection actions ───────────────────────────────────
       setDetectionLoading: (loading) => set((s) => { s.detection.isLoading = loading; }),
@@ -217,7 +208,6 @@ export const useAppStore = create<AppState & AppActions>()(
       partialize: (state) => ({
         viewMode:              state.viewMode,
         decisionEngineEnabled: state.decisionEngineEnabled,
-        selectedLLMModel:      state.selectedLLMModel,
       }),
     },
   ),

@@ -50,7 +50,7 @@ from api.schemas import (
     IFLayerResult,
     AnomalyExplanationResponse,
 )
-from config.settings import MODEL_PATHS, ROLLING_WINDOW_SIZE, DECISION_ENGINE_CONFIG
+from config.settings import MODEL_PATHS, ROLLING_WINDOW_SIZE, DECISION_ENGINE_CONFIG, LLM_CONFIG
 from pipeline import run as run_pipeline
 from pipeline.feature_engineer import summarize_rolling_state
 from pipeline.if_detector import reload_artifacts
@@ -499,6 +499,8 @@ async def health() -> dict:
             "model_artifacts": "ok" if models_ok else "missing",
             "database":        "ok" if db_ok else ("unavailable" if _DB_AVAILABLE else "not_configured"),
         },
+        "llm_model":    LLM_CONFIG["model"],
+        "llm_provider": LLM_CONFIG["provider"],
     }
 
 

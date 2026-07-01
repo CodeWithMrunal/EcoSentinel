@@ -249,6 +249,6 @@ export const DETECTION_THRESHOLDS = {
   power_factor_min:               0.0,
   power_factor_max:               1.0,
   zero_consumption_window:        3,
-  if_contamination:               0.05,
+  if_contamination:               0.07,
   rolling_window_size:            5,
 } as const;
