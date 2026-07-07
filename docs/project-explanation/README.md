@@ -23,9 +23,13 @@ Ollama by default). A React/TypeScript SPA drives detection, explanation polling
 heterogeneous meters, graceful degradation everywhere, schema-on-read telemetry, and a differentiated,
 on-prem-capable explanation layer.
 
-**What's genuinely broken or missing (honest headline):**
-- 🔴 The Isolation Forest's primary feature (`hourly_primary_ratio`) is **train/serve-skewed and inert
-  at inference** — the ML layer's headline signal is a constant `1.0` in production.
+**Recently fixed:**
+- ✅ The Isolation Forest's primary feature (`hourly_primary_ratio`) was **train/serve-skewed and inert
+  at inference**; it now reads its same-hour baseline from a per-meter DB lookback and carries real
+  signal in production. The same fix reactivates the `same_hour_deviation` z-score trigger.
+  ([C1](./known-limitations.md)/[C2](./known-limitations.md)).
+
+**What's still broken or missing (honest headline):**
 - 🔴 **Frequency anomalies are undetectable by any layer**; `group_D` silently ignores frequency and
   export energy.
 - ⚠️ **Three-phase support does not exist** — the pipeline is single-phase only, while three-phase is
@@ -75,13 +79,14 @@ deploy/security → `07`; what to do next → `08`.
 
 ---
 
-## The five things that matter most (from `08-roadmap.md`)
+## The things that matter most (from `08-roadmap.md`)
 
-1. **Fix `hourly_primary_ratio`** (persisted per-meter/per-hour baselines) — unlocks the ML layer. [C1]
-2. **Wire frequency + make features data-driven** — stop dropping parameters. [C3](./known-limitations.md)/[C3.1](./known-limitations.md)
-3. **Three-phase support** (rules-first) — a stated future requirement; the system is single-phase only. [C4](./known-limitations.md)
-4. **Operator feedback loop** — gives the system its first real ground truth. [C13](./known-limitations.md)
-5. **AuthN/Z + security** — the service currently trusts anyone who can reach it. [C10](./known-limitations.md)
+0. ✅ **`hourly_primary_ratio` is fixed** — same-hour baseline now read from a per-meter DB lookback;
+   this unlocked the ML layer and reactivated the same-hour z-score trigger. [C1](./known-limitations.md)/[C2](./known-limitations.md)
+1. **Wire frequency + make features data-driven** — stop dropping parameters. [C3](./known-limitations.md)/[C3.1](./known-limitations.md)
+2. **Three-phase support** (rules-first) — a stated future requirement; the system is single-phase only. [C4](./known-limitations.md)
+3. **Operator feedback loop** — gives the system its first real ground truth. [C13](./known-limitations.md)
+4. **AuthN/Z + security** — the service currently trusts anyone who can reach it. [C10](./known-limitations.md)
 
 ---
 

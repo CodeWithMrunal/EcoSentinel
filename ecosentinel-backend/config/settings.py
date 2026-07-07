@@ -338,6 +338,13 @@ DETECTION_CONFIG = {
 
 ROLLING_WINDOW_SIZE = DETECTION_CONFIG["rolling_window_size"]
 
+# Lookback window (in days) for the same-hour / same-day-type baselines used by
+# hourly_primary_ratio and the z-score SAME_HOUR_DEVIATION trigger. Intentionally
+# distinct from ROLLING_WINDOW_SIZE: the 5-row window is a *recent* baseline for
+# delta/rolling/z-score, whereas the same-hour statistic needs many days of history
+# so the current reading's hour-of-day is actually represented (see C1).
+SAME_HOUR_LOOKBACK_DAYS = 30
+
 # =========================================================
 # DECISION ENGINE — LLM CONFIGURATION
 #

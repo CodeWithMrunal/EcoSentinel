@@ -86,9 +86,12 @@ Computes the feature vector from the canonical dict + DB history. Key behaviours
   `power_factor_deviation`, `current_delta/_z_score/_spike_ratio`, and **`hourly_primary_ratio`**
   (lines 343-366). Missing inputs → `None`, then all `ALL_FEATURES` keys are backfilled to `None`
   (lines 369-371).
-- ⚠️ **`hourly_primary_ratio` — the feature the IF was designed around — is near-constant `1.0` at
-  inference** because same-hour history is unavailable in a 5-row window. This is the single most
-  important correctness issue: [C1](./known-limitations.md).
+- ✅ **`hourly_primary_ratio` — the feature the IF was designed around — now carries real signal at
+  inference.** The same-hour baseline is sourced from a large per-meter DB lookback
+  (`SAME_HOUR_LOOKBACK_DAYS`) via an injected `baseline_provider`, rather than the 5-row window.
+  This was the single most important correctness issue and is now **resolved**:
+  [C1](./known-limitations.md). (A cold-start meter with no history still defaults to `1.0` — see
+  [C6](./known-limitations.md).)
 - ⚠️ `NOMINAL_VOLTAGE = 230.0` and `holiday = Sunday` are hardcoded (lines 34, 45-46) — see
   [C11](./known-limitations.md).
 - ⚠️ **`frequency` is never emitted** into the feature dict — see [C3.1](./known-limitations.md).
@@ -114,8 +117,8 @@ it's meant to be an ML-only anomaly (`test_data_payloads.json:171-177`).
 Threshold checks on the primary series' `z_score` (|z| > 3.0, lines 93-104), `spike_ratio`
 (> 4× or < 0.1×, lines 130-149, **energy-only**), and `same_hour_deviation` (> 0.40, lines 114-124).
 
-- ⚠️ `same_hour_deviation` depends on same-hour history → effectively unreachable at inference
-  ([C2](./known-limitations.md)).
+- ✅ `same_hour_deviation` depends on same-hour history → now reachable at inference since the
+  same-hour baseline is populated by the C1 fix ([C2](./known-limitations.md), resolved).
 - ⚠️ The raw rolling `z_score` on a 5-reading window is vulnerable to normal morning ramps
   ([C5](./known-limitations.md)); spike/drop-ratio triggers require `energy is not None`, so
   energy-less meters (group_V) get weaker statistical coverage.
@@ -127,8 +130,8 @@ group's model, scaler, and saved feature list are lazy-loaded and cached (`_load
 176-203); the global fallback applies **median imputation** for missing features (`_run_global_model`,
 lines 318-352). Response carries `model_used` and `features_used`.
 
-- ⚠️ Efficacy is undercut by [C1](./known-limitations.md) (dead primary feature),
-  [C3](./known-limitations.md) (group_D drops frequency/export), and
+- ⚠️ Efficacy was undercut by [C1](./known-limitations.md) (now **fixed** — primary feature restored),
+  and is still limited by [C3](./known-limitations.md) (group_D drops frequency/export) and
   [C5](./known-limitations.md) (7% contamination floor).
 - Dead code: `_group_features_for` (lines 79-127) is never called at inference.
 
@@ -228,9 +231,9 @@ frontend mirrors backend capability groups and OBIS labels in `constants/config.
   noise).
 
 **Breaks down / caveated ⚠️ (all detailed in [`known-limitations.md`](./known-limitations.md))**
-- **C1** train/serve skew on `hourly_primary_ratio` — the ML layer's headline feature is inert at
-  serving time.
-- **C2** the same-hour z-score trigger can't fire in production.
+- ✅ **C1 (resolved)** train/serve skew on `hourly_primary_ratio` — the ML layer's headline feature
+  is now sourced from a per-meter same-hour DB baseline and carries signal at serving time.
+- ✅ **C2 (resolved)** the same-hour z-score trigger can now fire in production (same fix as C1).
 - **C3 / C3.1** group_D ignores frequency & export; frequency anomalies are undetectable by *any*
   layer.
 - **C4** single-phase-only design; three-phase (a stated future requirement) is unsupported.

@@ -57,11 +57,16 @@ class PipelineResult:
         }
 
 
-def run(api_record: dict, history: list[dict]) -> PipelineResult:
+def run(api_record: dict, history: list[dict], baseline_provider=None) -> PipelineResult:
     """
     Runs the complete detection pipeline for one API record.
     Energy consumption is not required; all features degrade
     gracefully when parameters are absent.
+
+    baseline_provider : optional callable injected by the API layer that
+        supplies the same-hour / same-day-type averages from a large per-meter
+        history (see feature_engineer.BaselineProvider and C1). When None, the
+        feature engineer falls back to the in-request rolling window.
     """
     meter_serial = api_record.get("meterSerial", "UNKNOWN")
     pipeline_started = perf_counter()
@@ -117,6 +122,7 @@ def run(api_record: dict, history: list[dict]) -> PipelineResult:
             canonical=canonical,
             interval_ts=interval_ts,
             history=history,
+            baseline_provider=baseline_provider,
         )
         logger.info(
             f"[{meter_serial}] Feature engineering completed in {(perf_counter() - stage_started) * 1000:.1f} ms; non_null_features={_summarize_present(features)}."

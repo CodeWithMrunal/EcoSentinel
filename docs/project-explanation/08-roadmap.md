@@ -9,9 +9,10 @@
 
 ## Guiding principle
 
-**Do not scale or productize a detector whose primary feature is inert.** The correctness fixes
-(Phase 0) gate everything else — accuracy claims, LLM-cost economics, and scale efficiency all depend
-on them. Sequence matters more than breadth.
+**Do not scale or productize a detector whose primary feature is inert.** The headline instance of
+this — `hourly_primary_ratio` (0.1 / [C1](./known-limitations.md)) — is now **fixed**; the remaining
+correctness fixes (Phase 0) gate everything else — accuracy claims, LLM-cost economics, and scale
+efficiency all depend on them. Sequence matters more than breadth.
 
 ---
 
@@ -19,8 +20,8 @@ on them. Sequence matters more than breadth.
 
 | # | Item | Why | Ref |
 |---|---|---|---|
-| 0.1 | **Fix `hourly_primary_ratio`**: compute same-hour baselines from a persisted per-meter/per-hour table, not the 5-row window | The ML layer's headline feature is a constant `1.0` at inference — the single biggest bug | [C1](./known-limitations.md) |
-| 0.2 | **Fix `same_hour_deviation`** (same root cause) | Documented z-score trigger can't fire | [C2](./known-limitations.md) |
+| 0.1 | ✅ **DONE — Fixed `hourly_primary_ratio`**: same-hour baselines now come from a per-meter DB lookback (`SAME_HOUR_LOOKBACK_DAYS`) via an injected `baseline_provider`, not the 5-row window. Follow-up: move to a *persisted* per-meter/per-hour store to also cover cold-start ([C6](./known-limitations.md)) | The ML layer's headline feature was a constant `1.0` at inference — the single biggest bug | [C1](./known-limitations.md) |
+| 0.2 | ✅ **DONE — Fixed `same_hour_deviation`** (same root cause; trigger now fires once the baseline is populated) | Documented z-score trigger couldn't fire | [C2](./known-limitations.md) |
 | 0.3 | **Wire `frequency` (and `active_export_energy`) into feature engineer + training feature-list** | Frequency anomalies are undetectable by any layer | [C3](./known-limitations.md), [C3.1](./known-limitations.md) |
 | 0.4 | **Refactor per-parameter branches** in `feature_engineer` / `train._group_feature_list` to be **data-driven** (loop over group raw features + `DERIVED_FEATURE_MAP`) | Makes "config-only" real; prevents future dropped-feature bugs; unblocks 3φ | `03-...` §2 |
 | 0.5 | **Rebalance false-positive pressure**: revisit `contamination=0.07`, add a score-fusion/consensus verdict instead of hard-OR, mitigate the z-score ramp sensitivity | Structural FP floor makes downstream (LLM, ops) infeasible | [C5](./known-limitations.md) |
@@ -118,11 +119,13 @@ network-context is added to the explanations, it can become a differentiated rev
 edge product rather than a commodity anomaly scorer.
 
 **The central risk.** The project *looks* more finished than it is. The architecture, config design,
-and explanation UX create an impression of maturity, but the ML layer's primary feature is inert at
-serving time, an entire parameter is undetectable, and three-phase support (a stated requirement) is
-absent while the system is single-phase only. **The biggest risk is scaling/productizing on top of this without fixing it** —
-you'd get a fast, well-instrumented system confidently producing unreliable verdicts, and the LLM would
-eloquently explain false positives at cloud-scale cost.
+and explanation UX create an impression of maturity. The most acute correctness gap — the ML layer's
+primary feature being inert at serving time — is now **fixed** ([C1](./known-limitations.md)/[C2](./known-limitations.md)),
+but an entire parameter is still undetectable (frequency), and three-phase support (a stated
+requirement) is absent while the system is single-phase only. **The biggest remaining risk is
+scaling/productizing on top of the un-fixed gaps** — you'd get a fast, well-instrumented system
+confidently producing unreliable verdicts, and the LLM would eloquently explain false positives at
+cloud-scale cost.
 
 **Key decisions ahead:**
 1. **Algorithm direction** — keep IF as a baseline vs invest in forecasting-residual + hierarchical
@@ -135,8 +138,9 @@ eloquently explain false positives at cloud-scale cost.
 5. **Model proliferation** — how far to segment models before the matrix becomes unmanageable; argues
    for hierarchical/shared-structure approaches over pure per-group IF. `04-...` §4, `06-...` §3.
 
-**If only five things get done:** 0.1 (fix `hourly_primary_ratio`), 0.3/0.4 (frequency + data-driven
-features), 1.2 (three-phase, rules-first), 2.4 (operator feedback loop), and 2.5 (auth/security). Those
-convert EcoSentinel from an impressive prototype into something that can be honestly trusted on a real
+**If only five things get done:** 0.1 (fix `hourly_primary_ratio`) is now **done**; the remaining
+priorities are 0.3/0.4 (frequency + data-driven features), 0.5 (false-positive rebalance),
+1.2 (three-phase, rules-first), 2.4 (operator feedback loop), and 2.5 (auth/security). Those convert
+EcoSentinel from an impressive prototype into something that can be honestly trusted on a real
 meter fleet.
 </content>

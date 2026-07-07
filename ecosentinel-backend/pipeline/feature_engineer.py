@@ -21,7 +21,7 @@ in priority order: energy_consumption → current → voltage.
 import logging
 import numpy as np
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from time import perf_counter
 import sys
 import os
@@ -32,6 +32,15 @@ from config.settings import ALL_FEATURES, ROLLING_WINDOW_SIZE
 logger = logging.getLogger(__name__)
 
 NOMINAL_VOLTAGE  = 230.0
+
+# A baseline provider computes the same-hour / same-day-type averages from a
+# large per-meter history (e.g. a DB lookback), rather than the tiny in-request
+# rolling window. Injected from the API layer so the pipeline stays DB-agnostic.
+#   args:    (hist_key, hour_of_day, is_weekend)
+#   returns: (historical_avg_same_hour, historical_avg_same_day_type)
+# Either returned value may be None when insufficient history exists; in that
+# case the caller falls back to the in-window same-hour scan. See C1.
+BaselineProvider = Callable[[str, int, int], "tuple[Optional[float], Optional[float]]"]
 
 # Priority order for the "primary series" used in rolling stats.
 # The first key present in the canonical dict wins.
@@ -142,6 +151,7 @@ def summarize_rolling_state(
     history: list[dict],
     interval_ts: str,
     include_current: bool = False,
+    baseline_provider: Optional[BaselineProvider] = None,
 ) -> dict:
     """
     Summarises the historical rolling baseline and optionally the
@@ -198,7 +208,24 @@ def summarize_rolling_state(
     historical_avg_same_hour = None
     historical_avg_same_day_type = None
 
-    if hist_key is not None:
+    # Preferred source: a large per-meter same-hour baseline injected by the API
+    # layer (e.g. a 30-day DB average). The in-request `history` here is only the
+    # last ROLLING_WINDOW_SIZE readings (~2.5h), which almost never contains the
+    # current hour-of-day — so the in-window scan below yields None at inference
+    # and hourly_primary_ratio collapses to its neutral 1.0 default (C1). When no
+    # provider is supplied (training, or DB unavailable) we fall back to that scan.
+    provider_used = False
+    if baseline_provider is not None and hist_key is not None:
+        try:
+            historical_avg_same_hour, historical_avg_same_day_type = baseline_provider(
+                hist_key, hour_of_day, is_weekend
+            )
+            provider_used = True
+        except Exception as exc:
+            logger.warning(f"Baseline provider failed; falling back to window scan: {exc}")
+            provider_used = False
+
+    if not provider_used and hist_key is not None:
         same_hour_vals = [
             float(h["raw_data"][hist_key])
             for h in history
@@ -259,6 +286,7 @@ def compute_features(
     canonical: dict,
     interval_ts: str,
     history: list[dict],
+    baseline_provider: Optional[BaselineProvider] = None,
 ) -> dict:
     """
     Computes the full feature vector for one reading.
@@ -282,7 +310,10 @@ def compute_features(
         f"Feature engineering started with canonical_keys={list(canonical.keys())} and history_len={len(history)}."
     )
 
-    summary = summarize_rolling_state(canonical, history, interval_ts, include_current=False)
+    summary = summarize_rolling_state(
+        canonical, history, interval_ts, include_current=False,
+        baseline_provider=baseline_provider,
+    )
     logger.info(
         f"Historical sample count={summary['history_sample_count']}, rolling_mean={_round_opt(summary['rolling_mean'])}, rolling_std={_round_opt(summary['rolling_std'])}, same_hour_avg={_round_opt(summary['historical_avg_same_hour'])}."
     )

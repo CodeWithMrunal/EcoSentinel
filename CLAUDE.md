@@ -81,6 +81,8 @@ Each `POST /detect` request runs every record through **6 sequential stages**:
 
 The Isolation Forest is fed **time-normalised features** — specifically `hourly_primary_ratio` = primary_value / historical_avg_same_hour, plus raw absolute values and time features. `z_score`, `spike_ratio`, `current_z_score`, and `current_spike_ratio` are **excluded** from the IF feature set: with a 5-reading (2.5hr) rolling window, natural morning load ramp-ups produce z_scores of 15–20 for completely normal readings, while subtle anomalies only reach z_scores of 3–6. IF would treat the normal ramp-up as more isolatable (more anomalous) → ROC-AUC inverts below 0.5. `hourly_primary_ratio` avoids this by normalising against the same-hour historical average, yielding ≈ 1.0 for any normal reading regardless of time of day.
 
+**Same-hour baseline source (C1 fix).** `historical_avg_same_hour` must come from a *large* per-meter history so the current reading's hour-of-day is actually represented. The 5-reading rolling window (used for `delta`/`rolling_*`/`z_score`) spans only 2.5h and never contains the same hour, which would leave `hourly_primary_ratio` stuck at its neutral `1.0` default at inference (train/serve skew). At serving, the API injects a `baseline_provider` (`api/main._make_baseline_provider`) that reads the same-hour / same-day-type averages from a `SAME_HOUR_LOOKBACK_DAYS` (30-day) DB lookback via `db.client.get_historical_avg_same_hour` / `get_historical_avg_same_day_type`. `compute_features`/`summarize_rolling_state` accept this optional provider and fall back to the in-window scan when it is absent (training, or DB unavailable). Training is unchanged — it accumulates full per-meter history in memory, so it always saw a real baseline. This also reactivates the z-score `SAME_HOUR_DEVIATION_EXCEEDED` trigger. A meter with no accumulated history still defaults to `1.0` (cold-start).
+
 ### Capability Group Model Routing
 
 The backend has 6 Isolation Forest models (group_A through group_V), each trained on a specific subset of meter features, plus a global fallback:
@@ -97,7 +99,7 @@ The synthetic training dataset uses a deterministic **`METER_ROSTER`** (72 meter
 
 ### Configuration — Single Source of Truth
 
-`config/settings.py` is where everything lives: OBIS registry, capability group definitions, feature schema, detection thresholds, rolling window size, Decision Engine config. **Any change to meter types, OBIS codes, or thresholds starts here.**
+`config/settings.py` is where everything lives: OBIS registry, capability group definitions, feature schema, detection thresholds, `ROLLING_WINDOW_SIZE` (5-reading recent baseline) and `SAME_HOUR_LOOKBACK_DAYS` (30-day same-hour baseline window — kept separate on purpose, see IF Feature Design), Decision Engine config. **Any change to meter types, OBIS codes, or thresholds starts here.**
 
 ### Decision Engine (`decision_engine/`)
 
@@ -107,10 +109,10 @@ When an anomaly is flagged, an async background task calls an LLM (Ollama or Ope
 
 Three PostgreSQL tables:
 - `raw_meter_readings` — immutable audit trail of every raw record
-- `meter_telemetry` — parsed canonical features (used for rolling-window history)
+- `meter_telemetry` — parsed canonical features (used for rolling-window history **and** the per-meter same-hour baseline that feeds `hourly_primary_ratio`, via `get_historical_avg_same_hour`)
 - `anomaly_log` — flagged anomalies + LLM explanation fields
 
-**DB is optional** — the API degrades gracefully if PostgreSQL is unavailable (history-based features will be absent, but rule-based and IF detection still run).
+**DB is optional** — the API degrades gracefully if PostgreSQL is unavailable (history-based features and the same-hour baseline will be absent — `hourly_primary_ratio` falls back to `1.0` — but rule-based and IF detection still run).
 
 ### Frontend (`ecosentinel-frontend/`)
 

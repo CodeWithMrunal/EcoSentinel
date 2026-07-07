@@ -345,26 +345,29 @@ def get_last_n_readings(
 def get_historical_avg_same_hour(
     meter_serial: str,
     hour: int,
+    column: str = "energy_consumption",
     lookback_days: int = 30,
 ) -> Optional[float]:
     """
-    Returns the average energy_consumption for this meter
-    at the given hour of day, computed over the last
-    `lookback_days` days. Used for historical_avg_same_hour feature.
+    Returns the average value of `column` for this meter at the given
+    hour of day, computed over the last `lookback_days` days. Used for
+    the historical_avg_same_hour feature. `column` is the canonical key
+    of the meter's primary series (energy_consumption, current, or
+    voltage) so meters without energy still get a same-hour baseline.
     Returns None if no data exists.
     """
     sql = """
-        SELECT AVG((raw_data->>'energy_consumption')::float)
+        SELECT AVG((raw_data->>%s)::float)
         FROM meter_telemetry
         WHERE meter_serial = %s
           AND EXTRACT(HOUR FROM interval_timestamp) = %s
-          AND interval_timestamp >= NOW() - INTERVAL '%s days'
+          AND interval_timestamp >= NOW() - make_interval(days => %s)
             AND flagged_anomalous = FALSE
-          AND raw_data ? 'energy_consumption';
+          AND raw_data ? %s;
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (meter_serial, hour, lookback_days))
+            cur.execute(sql, (column, meter_serial, hour, lookback_days, column))
             result = cur.fetchone()
 
     return result[0] if result and result[0] is not None else None
@@ -373,29 +376,32 @@ def get_historical_avg_same_hour(
 def get_historical_avg_same_day_type(
     meter_serial: str,
     is_weekend: int,
+    column: str = "energy_consumption",
     lookback_days: int = 30,
 ) -> Optional[float]:
     """
-    Returns the average energy_consumption for this meter
-    on weekdays or weekends (is_weekend=0 or 1),
-    computed over the last `lookback_days` days.
-    Returns None if no data exists.
+    Returns the average value of `column` for this meter on weekdays or
+    weekends (is_weekend=0 or 1), computed over the last `lookback_days`
+    days. `column` is the canonical key of the meter's primary series
+    (see get_historical_avg_same_hour). Returns None if no data exists.
     """
     sql = """
-        SELECT AVG((raw_data->>'energy_consumption')::float)
+        SELECT AVG((raw_data->>%s)::float)
         FROM meter_telemetry
         WHERE meter_serial = %s
           AND (EXTRACT(DOW FROM interval_timestamp) IN (0, 6)) = %s
-          AND interval_timestamp >= NOW() - INTERVAL '%s days'
+          AND interval_timestamp >= NOW() - make_interval(days => %s)
             AND flagged_anomalous = FALSE
-          AND raw_data ? 'energy_consumption';
+          AND raw_data ? %s;
     """
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (
+                column,
                 meter_serial,
                 bool(is_weekend),
                 lookback_days,
+                column,
             ))
             result = cur.fetchone()
 
