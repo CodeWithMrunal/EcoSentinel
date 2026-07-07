@@ -144,8 +144,9 @@ per-phase PF/negative-current checks. Thresholds belong in a per-type section of
 
 **Stage 5 — Z-Score** ⚠️ *reusable pattern, more series.* The z-score machinery generalizes: run it
 per phase and/or on the imbalance series. The current single-primary-series design
-(`_rolling_features`) must be applied to multiple series. Same caveats as single-phase
-([C1](./known-limitations.md)/[C5](./known-limitations.md)) apply per phase.
+(`_rolling_features`) must be applied to multiple series. The per-phase same-hour baseline would be
+sourced through the same `baseline_provider` seam introduced by the [C1](./known-limitations.md) fix;
+the [C5](./known-limitations.md) false-positive caveats still apply per phase.
 
 **Stage 6 — Isolation Forest / Capability Groups** 🔲 *new groups + retrain.* Define new 3φ groups
 (e.g. `group_3P_full`: V1-3, I1-3, PF1-3, neutral, energies) in `CAPABILITY_GROUPS`. Because routing is

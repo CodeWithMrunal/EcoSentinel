@@ -6,15 +6,17 @@
 > is stated explicitly.
 >
 > Legend: **🔴 Correctness bug** (produces wrong results) · **🟠 Design gap / tech debt**
-> (works, but fragile or incomplete) · **🟡 Doc/΅config drift** (misleading, low risk).
+> (works, but fragile or incomplete) · **🟡 Doc/΅config drift** (misleading, low risk) ·
+> **✅ Resolved** (fixed in code; the diagnosis is kept for the audit trail).
 >
 > Paths are relative to `ecosentinel-backend/` unless noted.
 
 ---
 
-## 🔴 C1 — `hourly_primary_ratio` (the primary IF feature) is train/serve-skewed and near-dead at inference
+## ✅ C1 (RESOLVED) — `hourly_primary_ratio` (the primary IF feature) was train/serve-skewed and near-dead at inference
 
-**The single most important finding in the codebase.**
+**This was the single most important finding in the codebase — now fixed.** See **"Fix applied"**
+at the end of this entry; the diagnosis below is retained as the audit trail.
 
 The Isolation Forest was deliberately redesigned around one feature, `hourly_primary_ratio`,
 to avoid the diurnal-ramp problem (documented in `CLAUDE.md` "IF Feature Design" and in
@@ -57,15 +59,43 @@ feature that, in production, collapses to a constant `1.0`.
 values only; the feature they were designed around is inert at serving time. This is classic
 **train/serve skew** and likely the biggest driver of unreliable IF verdicts on real traffic.
 
-**Fix direction (see `04-model-training-and-locality.md`):** either (a) compute
-`historical_avg_same_hour` from a persisted per-meter/per-hour baseline table instead of the
-5-row window, or (b) fetch a much larger history window (e.g. last N days at this hour) for the
-same-hour statistic while keeping the 5-row window for `delta`/`rolling_*`. The two windows serve
-different purposes and should not share `ROLLING_WINDOW_SIZE`.
+**Fix applied (option (b), the "separate windows" route):** the same-hour / same-day-type baselines
+are now computed from a large per-meter DB lookback instead of the 5-row window, while the 5-row
+window is retained for `delta` / `rolling_*` / `z_score`. Concretely:
+
+- **`config/settings.py`** — added `SAME_HOUR_LOOKBACK_DAYS = 30`, decoupling the same-hour window
+  from `ROLLING_WINDOW_SIZE` (the two windows now serve their different purposes).
+- **`db/client.py`** — the previously-dead `get_historical_avg_same_hour` /
+  `get_historical_avg_same_day_type` helpers were generalised to accept any canonical `column`
+  (so `current`- and `voltage`-primary meters get a baseline too) and wired in. (`INTERVAL '%s days'`
+  was also replaced with `make_interval(days => %s)`.)
+- **`pipeline/feature_engineer.py`** — `summarize_rolling_state` / `compute_features` gained an
+  optional `baseline_provider` seam. When supplied it sources the same-hour averages; when absent
+  (training, or DB down) it falls back to the old in-window scan, so behaviour degrades gracefully.
+- **`pipeline/__init__.py` / `api/main.py`** — `api.main._make_baseline_provider(meter_serial)` binds
+  the DB helpers into a closure and injects it into the pipeline at `/detect`, keeping the pipeline
+  itself DB-agnostic. `_fetch_history` still fetches only `ROLLING_WINDOW_SIZE` rows.
+
+The training path is intentionally untouched: it already accumulates full per-meter history in memory,
+so it always had a real `hourly_primary_ratio`; the fix makes **serving** match it. Verified
+end-to-end: a normal reading now yields a non-null `historical_avg_same_hour` and a data-derived
+`hourly_primary_ratio` (≈ 0.96 in the check, not the hard-coded `1.0`), and a 2× spike yields ≈ 2.0.
+Per-group ROC-AUC after retraining is 0.84–0.91 (no inversion).
+
+> **Note:** this closes the train/serve *skew*. The residual **cold-start** case (a meter with no
+> accumulated same-hour history still defaults to `1.0`) is tracked separately as **C6**. A persisted
+> per-meter/per-hour baseline *table* (option (a)) remains a clean future upgrade — swap the
+> `baseline_provider` body, no pipeline change.
 
 ---
 
-## 🔴 C2 — `same_hour_deviation` z-score trigger is effectively unreachable at inference
+## ✅ C2 (RESOLVED) — `same_hour_deviation` z-score trigger was effectively unreachable at inference
+
+**Fixed as a direct consequence of C1.** The trigger reads
+`features["historical_avg_same_hour"]`, which is now populated at inference by the same-hour DB
+baseline (see C1 "Fix applied"). Verified: a 2× spike at a seeded meter now fires
+`SAME_HOUR_DEVIATION_EXCEEDED` in the z-score layer. The diagnosis below is retained as the audit
+trail.
 
 `zscore_detector.check` computes (`zscore_detector.py:114-124`):
 
@@ -77,10 +107,11 @@ if energy is not None and same_hour_avg not in (None, 0):
         triggers.append("SAME_HOUR_DEVIATION_EXCEEDED")
 ```
 
-It depends on `historical_avg_same_hour`, which per **C1** is ~always `None` at inference. So the
-`SAME_HOUR_DEVIATION_EXCEEDED` trigger described throughout `test_data_payloads.json`
-(e.g. the `same_hour_deviation` test, lines 81-98) will not fire in a real deployment even though
-the payloads assert it does. Same root cause as C1.
+It depends on `historical_avg_same_hour`, which — *before the C1 fix* — was ~always `None` at
+inference. So the `SAME_HOUR_DEVIATION_EXCEEDED` trigger described throughout
+`test_data_payloads.json` (e.g. the `same_hour_deviation` test, lines 81-98) could not fire in a real
+deployment even though the payloads assert it does. Same root cause as C1, and fixed by the same
+change.
 
 ---
 
@@ -301,10 +332,10 @@ match what is installed (git history mentions renaming the gemma model to a loca
   given IF's tree splits.
 - **`_persist` does up to two extra full history reads + two `summarize_rolling_state` calls per
   record purely for logging** (`api/main.py:392-420`), doubling DB load on the hot path.
-- **`get_historical_avg_same_hour` / `get_historical_avg_same_day_type`** exist in `db/client.py`
-  (lines 345-402) and would fix C1/C2 if wired in — but **nothing calls them**; the feature
-  engineer recomputes same-hour stats from the tiny in-request window instead. The correct plumbing
-  is already half-built and simply not connected.
+- ~~**`get_historical_avg_same_hour` / `get_historical_avg_same_day_type`** exist in `db/client.py`
+  but nothing calls them.~~ **Resolved (C1):** these helpers were generalised to any canonical
+  `column` and are now wired into serving via the `baseline_provider` seam; the feature engineer only
+  falls back to the in-request window when no provider is supplied (training / DB down).
 - **`sustained_zero` rule** requires `rolling_std < 0.01` AND `energy == 0.0`
   (`rule_based.py:102-112`); with the anomalous-exclusion behaviour (C7) and a 5-row window, the
   first zero readings may not satisfy it, so the "3 consecutive zeros" story in

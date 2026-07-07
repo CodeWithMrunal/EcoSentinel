@@ -63,7 +63,7 @@ portfolio, not a greenfield market entrant.
 |---|---|---|
 | **Phase support** | 1φ **and** 3φ, per-phase imbalance, neutral current | ⚠️ Single-phase only ([C4](./known-limitations.md)) |
 | **Ingestion** | Streaming (Kafka/MQTT) at fleet scale, VEE built-in | ⚠️ Request/response `POST /detect`; no streaming |
-| **Model sophistication** | Forecasting-residual, per-meter baselines, network/topology-aware theft models, cross-meter correlation | ⚠️ Isolation Forest with a broken key feature ([C1](./known-limitations.md)) |
+| **Model sophistication** | Forecasting-residual, per-meter baselines, network/topology-aware theft models, cross-meter correlation | ⚠️ Isolation Forest; its key feature (per-meter same-hour ratio) now works after the [C1](./known-limitations.md) fix, but no forecasting/topology models yet |
 | **Feedback / learning loop** | Analyst dispositions feed retraining; case management | 🔲 None ([C13](./known-limitations.md)) |
 | **Scale** | Millions of meters, horizontal workers | ⚠️ Serial batch loop, single API process ([C8](./known-limitations.md)) |
 | **Security / multi-tenancy** | AuthN/Z, tenant isolation, encryption, audit | 🔲 No auth, single-tenant ([C10](./known-limitations.md)) |
@@ -96,7 +96,7 @@ Effort: **S** ≈ days, **M** ≈ weeks, **L** ≈ 1–2 months, **XL** ≈ quar
 ### Tier 1 — high value, correctness/foundation (do first)
 | Feature | Value | Effort | Notes |
 |---|---|---|---|
-| Fix `hourly_primary_ratio` via persisted per-meter/per-hour baselines | Very high | M | Unlocks the entire ML layer ([C1](./known-limitations.md)); plumbing half-exists (`db/client.get_historical_avg_same_hour`) |
+| ✅ Fix `hourly_primary_ratio` (same-hour baseline from per-meter DB lookback) | Very high | M | **Done** — unlocked the ML layer ([C1](./known-limitations.md)); `db/client.get_historical_avg_same_hour` now wired via a `baseline_provider`. Follow-up: persist baselines in a store to also cover cold-start ([C6](./known-limitations.md)) |
 | Three-phase support (OBIS, canonical, features, rules, groups) | Very high | L | Stated future requirement; system is single-phase only ([C4](./known-limitations.md)); see `03-...` |
 | Operator feedback loop + case disposition | High | M | Turns alerts into labeled data; enables supervised uplift ([C13](./known-limitations.md)) |
 | Streaming ingestion (Kafka/HES-pull consumer) | High | L | Moves from demo to continuous operation; see `05-...` |

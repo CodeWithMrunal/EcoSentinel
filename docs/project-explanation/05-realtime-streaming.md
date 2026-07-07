@@ -18,8 +18,9 @@ queue, no continuous loop** — the service is a stateless function invoked on d
 polls the HES and forwards batches to `/detect`, and it would "work" for low volume. But:
 - It processes records in a **serial for-loop** with multiple synchronous DB round-trips each
   ([C8](./known-limitations.md)) — throughput is low.
-- The **key ML feature is inert** at inference ([C1](./known-limitations.md)), so verdict quality is
-  poor on real streams.
+- The **key ML feature** used to be inert at inference ([C1](./known-limitations.md), now **fixed**);
+  verdict quality still depends on each meter having accumulated same-hour history (cold-start,
+  [C6](./known-limitations.md)).
 - **LLM tasks are non-durable** ([C9](./known-limitations.md)) — restarts drop pending work.
 - **No idempotency at the app layer** beyond DB `ON CONFLICT` — replays re-run detection and re-spend
   LLM tokens.
@@ -89,9 +90,10 @@ Key architectural moves vs today:
 1. **Decouple ingestion, detection, and explanation** into separate consumer groups so each scales and
    fails independently. (Today all three share one API process.)
 2. **Detection workers are stateless** consumers; per-meter state (baselines, rolling history) lives in
-   Postgres and/or a **feature/baseline store** (Redis or a materialized table) — this is where the
-   [C1](./known-limitations.md) fix lives: per-meter/per-hour baselines are read here, not recomputed
-   from a 5-row window.
+   Postgres and/or a **feature/baseline store** (Redis or a materialized table). The
+   [C1](./known-limitations.md) fix already reads per-meter same-hour baselines from Postgres (via the
+   `baseline_provider` seam) rather than a 5-row window; promoting that to a dedicated store is the
+   scale-out continuation of the same design.
 2. **Explanation becomes its own durable Kafka consumer** (fixes [C9](./known-limitations.md)) with its
    own rate limit and retry — a restart just resumes from the offset; nothing is orphaned.
 4. **Anomalies are events** on `meter.anomalies`, fanned out to explanation, alerting, and ticketing.
@@ -158,10 +160,11 @@ guarantee for detection and LLM spend.
 
 ## 6. How much of today's code survives the transition?
 
-**Survives ✅:** the whole `pipeline/` package (pure function `run()`), `config/settings.py`,
-`db/schema.sql` (with additions), the decision-engine modules (reused inside an explanation worker),
-canonical mapping, and the feature engineer (once [C1](./known-limitations.md) is fixed to read from a
-baseline store).
+**Survives ✅:** the whole `pipeline/` package (pure function `run()`, which already accepts an
+injectable `baseline_provider`), `config/settings.py`, `db/schema.sql` (with additions), the
+decision-engine modules (reused inside an explanation worker), canonical mapping, and the feature
+engineer (the [C1](./known-limitations.md) fix already reads same-hour baselines through the provider
+seam; pointing it at a baseline store is a drop-in change).
 
 **Must be added 🔲:** ingestion adapter/poller, Kafka topics + schema registry, detection worker
 harness (consume → `run()` → produce), durable explanation worker, baseline/feature store, DLQ +

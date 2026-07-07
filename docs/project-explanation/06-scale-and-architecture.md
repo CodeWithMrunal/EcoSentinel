@@ -44,10 +44,11 @@ The scaling strategy hinges on separating what can scale horizontally from what 
 | **Query/scoring API (FastAPI)** | Stateless | Horizontal behind a load balancer |
 | **Frontend** | Stateless | CDN/static hosting |
 
-**Key enabler:** the `pipeline.run(api_record, history)` function is already pure/stateless — the only
-state it needs is `history`, which today comes from Postgres. Moving that read to a **baseline/feature
-store** (and fixing [C1](./known-limitations.md) at the same time) makes detection workers trivially
-horizontal.
+**Key enabler:** the `pipeline.run(api_record, history, baseline_provider)` function is already
+pure/stateless — the state it needs is `history` plus the same-hour baseline, both sourced from
+Postgres today (the latter via the injected `baseline_provider` added in the
+[C1](./known-limitations.md) fix). Moving those reads to a **baseline/feature store** makes detection
+workers trivially horizontal.
 
 The one **stateful subtlety**: rolling/baseline computation needs a meter's recent history. Keying
 Kafka by `meter_serial` pins each meter to one partition/worker, enabling local caching of that meter's
@@ -78,8 +79,9 @@ Postgres is the hardest-to-scale piece. Current schema is single-instance (`db/s
   the hot query is "last N readings for meter X before T" (`db/client.py:302-322`) — a partitioned +
   `(meter_serial, interval_timestamp DESC)` index (already exists, `db/schema.sql:97-98`) keeps it fast.
 - **Time-series engine**: **TimescaleDB** (hypertables, continuous aggregates, retention policies) is a
-  natural fit and would also materialize the **per-meter/per-hour baselines** needed to fix
-  [C1](./known-limitations.md) as a continuous aggregate.
+  natural fit and would materialize the **per-meter/per-hour baselines** — the same-hour averages the
+  [C1](./known-limitations.md) fix currently computes on demand — as a continuous aggregate, replacing
+  the per-request `AVG` with a precomputed lookup.
 - **Read replicas**: history/baseline reads (the hot path) go to replicas; writes to primary. Detection
   is read-heavy on history, write-heavy on telemetry — separate them.
 - **Retention & tiering**: raw audit data ages to cold storage (object store); keep recent telemetry
@@ -104,7 +106,8 @@ Explanation is the most expensive per-anomaly step and the least scalable:
 **Mitigations:**
 1. **Don't explain everything.** Explain only **high-severity or newly-opened cases** after dedupe
    ([C5](./known-limitations.md), `05-...` §4). Suppress repeats of an open case.
-2. **Fix false positives first** ([C1](./known-limitations.md)/[C5](./known-limitations.md)) so the
+2. **Fix false positives first** — the [C1](./known-limitations.md) feature skew is now fixed;
+   [C5](./known-limitations.md) (contamination floor + hard-OR verdict) still needs addressing so the
    explanation volume is real.
 3. **Async, durable, rate-limited worker pool** (`05-...` §3) with a bounded concurrency and a queue —
    explanations can lag detection without blocking it.
@@ -159,7 +162,7 @@ flowchart TD
 | Detection compute | ✅ Easy — pure function, horizontal once state is externalized |
 | Ingestion | 🔲 Needs the whole adapter→Kafka layer (`05-...`) |
 | DB | ⚠️→🔲 Needs partitioning/Timescale + replicas + caching |
-| Baselines/features | 🔲 Must move to a store (also fixes [C1](./known-limitations.md)) |
+| Baselines/features | ⚠️ [C1](./known-limitations.md) same-hour baseline now read from Postgres via the provider seam; should still move to a dedicated store at scale |
 | LLM explanations | ⚠️ Hardest to scale economically — needs selective explanation + rate-limited durable pool |
 | Model management | 🔲 Model matrix could explode ([C1](./known-limitations.md)/`04-...`); needs registry + LRU cache |
 | Query API/frontend | ✅ Straightforward horizontal + CDN |
@@ -174,7 +177,8 @@ externalized per-meter/segment baselines (Redis + TimescaleDB continuous aggrega
 stateless detection workers, and a rate-limited durable explanation pool.** The two hardest scale
 problems are **the database** (solved by time-partitioning/Timescale + replicas + caching) and **LLM
 explanation economics** (solved by fixing false positives, explaining selectively, and templating
-routine cases). None of this should be built before the correctness fixes in
-[`known-limitations.md`](./known-limitations.md) — scaling a detector whose primary feature is inert
-just scales the wrong answers.
+routine cases). None of this should be built before the remaining correctness fixes in
+[`known-limitations.md`](./known-limitations.md) — the primary-feature skew ([C1](./known-limitations.md))
+is now fixed, but scaling a detector with an unaddressed false-positive floor ([C5](./known-limitations.md))
+or undetectable parameters ([C3](./known-limitations.md)) just scales the wrong answers.
 </content>

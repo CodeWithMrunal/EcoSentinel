@@ -65,9 +65,11 @@ droop/random-walk, correlated multivariate anomalies, plausible anomaly rate.
 
 **Critical caveat:** the metrics from `train.py` are computed on synthetic test meters whose anomalies
 were injected by the same code that trains the model — an **optimistic, self-consistent evaluation**.
-They say little about real-world accuracy, and they are further inflated/deflated by the train/serve
-skew ([C1](./known-limitations.md)): the *training* pipeline computes `hourly_primary_ratio` over full
-history, so the model "works" in evaluation while being inert in production.
+They still say little about real-world accuracy. (They were previously *also* undermined by the
+train/serve skew on `hourly_primary_ratio` — the training pipeline computes it over full history while
+serving fell back to a constant `1.0`. That skew is now **fixed** ([C1](./known-limitations.md)):
+serving reads the same-hour baseline from a per-meter DB lookback, so the feature that evaluation
+rewards is the same feature production now uses.)
 
 ---
 
@@ -86,8 +88,9 @@ flowchart TD
 ```
 
 - **Feature engineering reuses the runtime engineer** (`compute_features`) row-by-row so training and
-  serving *should* match — the intent is right, but the history-window mismatch defeats it for
-  `hourly_primary_ratio` ([C1](./known-limitations.md)).
+  serving match. This used to be defeated for `hourly_primary_ratio` by a history-window mismatch, now
+  resolved: serving injects a `baseline_provider` that reads the same-hour average from a large DB
+  lookback, matching training's full-history computation ([C1](./known-limitations.md)).
 - **Meter-level stratified split** (lines 332-375): keeps all of a meter's readings on one side to
   prevent temporal leakage, and takes ~20% of *each group's* meters for test — guaranteeing every
   group has evaluation data.
@@ -142,9 +145,11 @@ approach becomes a combinatorial burden.
 | **Ensemble / score fusion** | Highest | Med | Med | High | via components | End-state |
 
 ### Recommendation — phased
-1. **Now:** keep IF, but **first fix [C1](./known-limitations.md)** (persisted per-meter/per-hour
-   baselines) so IF actually works; add a **robust per-meter/per-hour median+MAD baseline** as a
-   parallel cheap detector (also solves cold-start via segment fallback, §4).
+1. **Now:** keep IF. **[C1](./known-limitations.md) is now fixed** (serving reads the same-hour
+   baseline from a per-meter DB lookback), so IF's primary feature works; the next cheap win is a
+   **robust per-meter/per-hour median+MAD baseline** as a parallel detector (also solves cold-start
+   via segment fallback, §4), and moving the same-hour baseline into a persisted store (§4) to also
+   cover cold-start.
 2. **Next:** introduce **forecasting-residual detection** (start with quantile-regression GBM or
    Prophet per segment) as the primary consumption-anomaly detector; IF stays for multivariate
    cross-parameter oddities (E/I/PF combinations it's genuinely good at, e.g. tamper bypass).
@@ -182,7 +187,9 @@ function from reading one.
 - **Segment metadata**: add `locality`, `customer_class`, `phase_type`, `tariff` to meter master data
   (none of this exists in the current schema — it must be introduced as meter master data).
 - **Segment-aware baselines**: per-(segment, hour-of-day, day-type) expected value + spread, persisted
-  (extends the half-built `get_historical_avg_same_hour` idea to segment level).
+  (extends the now-wired per-meter `get_historical_avg_same_hour` baseline — see
+  [C1](./known-limitations.md) — to segment level; the `baseline_provider` seam is the natural
+  injection point).
 - **Routing key** = capability group **×** segment, replacing today's group-only routing. (This is the
   model-proliferation risk that argues against pure per-group IF, §3.)
 
@@ -266,10 +273,12 @@ This is also what turns the LLM `possible_false_positive_scenarios` output from 
 
 The synthetic data is **thoughtfully physical** and the training scaffolding (per-group models,
 stratified split, exact labels, reuse of the runtime feature engineer) is **above-average for a
-prototype** — but its evaluation is self-consistent and optimistic, and it is silently undermined by
-the train/serve skew ([C1](./known-limitations.md)). For production: **fix the baseline feature first,
-add robust per-segment baselines and forecasting-residual detection, make models hierarchical
-(global→segment→meter) to solve cold-start and locality, and stand up a real MLOps loop
-(versioning → eval gate → canary → rollback) plus an operator-feedback channel** that finally gives the
-system ground truth. Keep Isolation Forest as a fast multivariate baseline, not the sole detector.
+prototype**; its evaluation remains self-consistent and optimistic. The train/serve skew that used to
+silently undermine it ([C1](./known-limitations.md)) is now **fixed** — serving reads the same-hour
+baseline from a per-meter DB lookback. For production, the remaining work: **add robust per-segment
+baselines and forecasting-residual detection, make models hierarchical (global→segment→meter) to solve
+cold-start and locality, move the same-hour baseline into a persisted store, and stand up a real MLOps
+loop (versioning → eval gate → canary → rollback) plus an operator-feedback channel** that finally
+gives the system ground truth. Keep Isolation Forest as a fast multivariate baseline, not the sole
+detector.
 </content>

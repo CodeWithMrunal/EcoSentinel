@@ -50,7 +50,7 @@ from api.schemas import (
     IFLayerResult,
     AnomalyExplanationResponse,
 )
-from config.settings import MODEL_PATHS, ROLLING_WINDOW_SIZE, DECISION_ENGINE_CONFIG, LLM_CONFIG
+from config.settings import MODEL_PATHS, ROLLING_WINDOW_SIZE, SAME_HOUR_LOOKBACK_DAYS, DECISION_ENGINE_CONFIG, LLM_CONFIG
 from pipeline import run as run_pipeline
 from pipeline.feature_engineer import summarize_rolling_state
 from pipeline.if_detector import reload_artifacts
@@ -83,6 +83,8 @@ try:
     from db.client import (
         init_schema,
         get_last_n_readings,
+        get_historical_avg_same_hour,
+        get_historical_avg_same_day_type,
         insert_raw_reading,
         insert_telemetry,
         insert_anomaly,
@@ -176,6 +178,38 @@ def _fetch_history(meter_serial: str, before_timestamp: str) -> list[dict]:
     except Exception as e:
         logger.warning(f"Could not fetch history for {meter_serial}: {e}")
         return []
+
+
+def _make_baseline_provider(meter_serial: str):
+    """
+    Builds the same-hour / same-day-type baseline provider for one meter,
+    backed by a large DB lookback (SAME_HOUR_LOOKBACK_DAYS). Injected into the
+    pipeline so hourly_primary_ratio and the z-score same-hour trigger see real
+    historical data instead of the 2.5h rolling window (fixes C1/C2).
+
+    Returns None when the DB is unavailable, in which case the feature engineer
+    falls back to its in-window same-hour scan.
+    """
+    if not _DB_AVAILABLE:
+        return None
+
+    def provider(hist_key: str, hour: int, is_weekend: int):
+        try:
+            return (
+                get_historical_avg_same_hour(
+                    meter_serial, hour,
+                    column=hist_key, lookback_days=SAME_HOUR_LOOKBACK_DAYS,
+                ),
+                get_historical_avg_same_day_type(
+                    meter_serial, is_weekend,
+                    column=hist_key, lookback_days=SAME_HOUR_LOOKBACK_DAYS,
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"Baseline lookup failed for {meter_serial}: {e}")
+            return None, None
+
+    return provider
 
 
 def _persist(record, parsed_interval_ts: str, result) -> Optional[int]:
@@ -387,6 +421,7 @@ async def detect(
         result = run_pipeline(
             api_record=record.model_dump(),
             history=history,
+            baseline_provider=_make_baseline_provider(record.meterSerial),
         )
 
         if result.features and not result.error:
