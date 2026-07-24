@@ -29,8 +29,9 @@ efficiency all depend on them. Sequence matters more than breadth.
 | 0.7 | **Add a test suite + honest eval on held-out/real anomalies** | No automated tests exist; synthetic metrics are optimistic | `07-...` §3 |
 | 0.8 | **Reconcile docs/config drift** (README/CLAUDE numbers) | Prevent misleading readers/operators | [C14](./known-limitations.md) |
 
-**Exit criteria:** per-group ROC-AUC > 0.5 with the *serving* feature path; frequency anomalies
-detected; a passing CI test suite; FP rate measured and acceptable on realistic data.
+**Exit criteria:** per-group ROC-AUC > 0.5 and a healthy PR-AUC with the *serving* feature path;
+frequency anomalies detected; a passing CI test suite; FP rate measured and acceptable on realistic
+data.
 
 ---
 

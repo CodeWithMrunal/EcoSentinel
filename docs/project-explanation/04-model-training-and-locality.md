@@ -65,7 +65,9 @@ droop/random-walk, correlated multivariate anomalies, plausible anomaly rate.
 
 **Critical caveat:** the metrics from `train.py` are computed on synthetic test meters whose anomalies
 were injected by the same code that trains the model — an **optimistic, self-consistent evaluation**.
-They still say little about real-world accuracy. (They were previously *also* undermined by the
+They still say little about real-world accuracy. (The summary reports ROC-AUC **and PR-AUC / Average
+Precision** so the imbalance-aware metric is visible alongside the optimistic one — but on
+self-consistent synthetic data even PR-AUC is an upper bound on real-world performance.) (They were previously *also* undermined by the
 train/serve skew on `hourly_primary_ratio` — the training pipeline computes it over full history while
 serving fell back to a constant `1.0`. That skew is now **fixed** ([C1](./known-limitations.md)):
 serving reads the same-hour baseline from a per-meter DB lookback, so the feature that evaluation
@@ -82,7 +84,7 @@ flowchart TD
     FE --> SPLIT["Stratified 80/20 meter-level split<br/>per capability group (10 train / 2 test)"]
     SPLIT --> GRP["For each group:<br/>build feature list, StandardScaler + IsolationForest"]
     SPLIT --> GLB["Global fallback:<br/>ALL_FEATURES + median imputation"]
-    GRP --> EVAL["Evaluate on matched test meters<br/>precision/recall/F1/ROC-AUC/confusion"]
+    GRP --> EVAL["Evaluate on matched test meters<br/>precision/recall/F1/ROC-AUC/PR-AUC/confusion"]
     GLB --> EVAL
     EVAL --> SAVE["joblib dump → models/<group>/ and models/"]
 ```
@@ -100,6 +102,12 @@ flowchart TD
 - **Global fallback** trained on `ALL_FEATURES` (12) with median imputation (lines 461-489).
 - **IF params** (lines 70-76): `n_estimators=200`, `max_samples=1024`, `contamination=0.07`,
   `random_state=42`.
+- **Metrics reported** per model: precision, recall, F1, ROC-AUC, **PR-AUC (Average Precision)**, and
+  the confusion matrix (`_train_and_evaluate`), all guarded so single-class test groups degrade to a
+  "metrics not computable" note. **PR-AUC is the more appropriate headline metric** for this task:
+  with only ~5–6% positive (anomaly) labels, ROC-AUC is inflated by the large true-negative pool,
+  whereas PR-AUC's baseline is the positive prevalence — so it reflects how well the model actually
+  ranks the rare anomalies. Both are printed per model and in the final summary table.
 - ⚠️ **`group_D` feature-list drops frequency & active_export_energy** ([C3](./known-limitations.md)).
 
 **Moving from synthetic → real HES data** requires:
@@ -224,7 +232,7 @@ Today: `training/train.py` writes `models/`, and `POST /model/reload` (`api/main
 flowchart LR
     D["Fresh data<br/>(telemetry + feedback labels)"] --> T["Training job<br/>(scheduled/triggered)"]
     T --> V["Versioned artifacts<br/>model registry (v-timestamp+git sha+data hash)"]
-    V --> G{"Eval gate<br/>metrics ≥ baseline?<br/>no ROC-AUC inversion?"}
+    V --> G{"Eval gate<br/>ROC-AUC + PR-AUC ≥ baseline?<br/>no ROC-AUC inversion?"}
     G -->|fail| STOP["Reject, alert"]
     G -->|pass| STG["Deploy to staging<br/>shadow-score live traffic"]
     STG --> CAN["Canary: N% of meters"]
@@ -237,7 +245,8 @@ flowchart LR
   overwritten in place — no history, no rollback.)
 - **Evaluation gates**: block promotion unless metrics beat the incumbent **and** sanity checks pass
   (e.g. ROC-AUC > 0.5 per group — a direct guard against the inversion that motivated
-  [C1](./known-limitations.md)).
+  [C1](./known-limitations.md) — plus a **PR-AUC floor**, since on the imbalanced labels PR-AUC is the
+  metric that actually reflects anomaly-ranking quality).
 - **Shadow + canary**: score live traffic with the new model without acting, compare to incumbent, then
   ramp. The hot-reload endpoint is the promotion mechanism; add a version arg + registry behind it.
 - **Safe rollback**: `POST /model/reload?version=previous`. Because reload is already atomic per

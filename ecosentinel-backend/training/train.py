@@ -3,7 +3,8 @@ training/train.py
 ------------------
 Trains one Isolation Forest per capability group + one global
 fallback model. Includes 80/20 train/test split and full
-evaluation (precision, recall, F1, ROC-AUC, confusion matrix).
+evaluation (precision, recall, F1, ROC-AUC, PR-AUC / average
+precision, confusion matrix).
 
 Run from project root:
     python training/train.py
@@ -39,7 +40,8 @@ from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     precision_score, recall_score, f1_score,
-    roc_auc_score, confusion_matrix, classification_report,
+    roc_auc_score, average_precision_score,
+    confusion_matrix, classification_report,
 )
 
 from config.settings import (
@@ -239,6 +241,10 @@ def _train_and_evaluate(
         metrics["recall"]    = round(recall_score(y_test, y_pred, zero_division=0), 4)
         metrics["f1"]        = round(f1_score(y_test, y_pred, zero_division=0), 4)
         metrics["roc_auc"]   = round(roc_auc_score(y_test, y_score), 4)
+        # PR-AUC (average precision): area under the precision-recall curve.
+        # More informative than ROC-AUC on the imbalanced anomaly labels — its
+        # baseline equals the positive prevalence, not 0.5.
+        metrics["pr_auc"]    = round(average_precision_score(y_test, y_score), 4)
         cm = confusion_matrix(y_test, y_pred)
         metrics["confusion_matrix"] = {
             "TN": int(cm[0,0]), "FP": int(cm[0,1]),
@@ -264,6 +270,7 @@ def _print_metrics(label: str, metrics: dict, feature_list: list):
         print(f"     Recall     : {metrics['recall']:.4f}")
         print(f"     F1 score   : {metrics['f1']:.4f}")
         print(f"     ROC-AUC    : {metrics['roc_auc']:.4f}")
+        print(f"     PR-AUC     : {metrics['pr_auc']:.4f}")
         cm = metrics["confusion_matrix"]
         print(f"     Confusion  : TP={cm['TP']}  FP={cm['FP']}  "
               f"TN={cm['TN']}  FN={cm['FN']}")
@@ -497,15 +504,15 @@ print("\n  Saved → models/  (global fallback)")
 print("\n" + "=" * 65)
 print("  EVALUATION SUMMARY")
 print("=" * 65)
-print(f"  {'Model':<12} {'Precision':>10} {'Recall':>8} {'F1':>8} {'ROC-AUC':>9}")
-print("  " + "-" * 53)
+print(f"  {'Model':<12} {'Precision':>10} {'Recall':>8} {'F1':>8} {'ROC-AUC':>9} {'PR-AUC':>9}")
+print("  " + "-" * 63)
 
 for name, m in all_eval_results.items():
     if "precision" in m:
         print(f"  {name:<12} {m['precision']:>10.4f} {m['recall']:>8.4f} "
-              f"{m['f1']:>8.4f} {m['roc_auc']:>9.4f}")
+              f"{m['f1']:>8.4f} {m['roc_auc']:>9.4f} {m['pr_auc']:>9.4f}")
     else:
         note = m.get("note", "")
-        print(f"  {name:<12} {'—':>10} {'—':>8} {'—':>8} {'—':>9}  ({note})")
+        print(f"  {name:<12} {'—':>10} {'—':>8} {'—':>8} {'—':>9} {'—':>9}  ({note})")
 
 print("\n✓ Training complete.")

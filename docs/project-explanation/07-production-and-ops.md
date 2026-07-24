@@ -102,8 +102,9 @@ flowchart LR
   backward-compatible migrations (expand-contract) so rolling deploys never see an incompatible schema.
 
 ### Model rollout (build on hot-reload)
-Covered in `04-...` §6: **versioned registry → eval gate (incl. ROC-AUC>0.5 sanity, guarding
-[C1](./known-limitations.md)) → shadow → canary → promote via `/model/reload?version=X` → rollback**.
+Covered in `04-...` §6: **versioned registry → eval gate (ROC-AUC>0.5 sanity guarding
+[C1](./known-limitations.md), plus a PR-AUC floor for the imbalanced labels) → shadow → canary →
+promote via `/model/reload?version=X` → rollback**.
 Application and model rollouts are **independent pipelines** — a model can be promoted/rolled back
 without a code deploy, which the hot-reload endpoint already enables.
 
