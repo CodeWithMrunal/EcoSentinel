@@ -16,6 +16,7 @@ models/
   scaler.joblib
   impute_values.joblib
   feature_schema.joblib
+  evaluation_results.md      ← AUTO-GENERATED MARKDOWN REPORT
   group_A/
     isolation_forest.joblib  ← group-specific model
     scaler.joblib
@@ -515,4 +516,54 @@ for name, m in all_eval_results.items():
         note = m.get("note", "")
         print(f"  {name:<12} {'—':>10} {'—':>8} {'—':>8} {'—':>9} {'—':>9}  ({note})")
 
-print("\n✓ Training complete.")
+
+# =========================================================
+# STEP 6 — SAVE RESULTS TO MARKDOWN (NEW SECTION)
+# =========================================================
+
+MD_PATH = os.path.join("models", "evaluation_results.md")
+print(f"\n[ 6/6 ] Saving complete Markdown report to {MD_PATH} ...")
+
+os.makedirs(os.path.dirname(MD_PATH), exist_ok=True)
+
+with open(MD_PATH, "w", encoding="utf-8") as f:
+    f.write("# Model Evaluation Results\n\n")
+    f.write(f"**Date Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    f.write(f"**Train/Test Split:** {TRAIN_RATIO*100}% / {(1-TRAIN_RATIO)*100}%\n\n")
+
+    f.write("## 1. Summary Metrics\n\n")
+    f.write("| Model Group | Precision | Recall | F1 Score | ROC-AUC | PR-AUC | Notes |\n")
+    f.write("|---|---|---|---|---|---|---|\n")
+
+    for name, m in all_eval_results.items():
+        if "precision" in m:
+            f.write(f"| **{name}** | {m['precision']:.4f} | {m['recall']:.4f} | {m['f1']:.4f} | {m['roc_auc']:.4f} | {m['pr_auc']:.4f} | - |\n")
+        else:
+            note = m.get("note", "No test data")
+            f.write(f"| **{name}** | - | - | - | - | - | {note} |\n")
+
+    f.write("\n## 2. Detailed Breakdown & Confusion Matrices\n\n")
+    for name, m in all_eval_results.items():
+        f.write(f"### Model: `{name}`\n")
+        f.write(f"- **Training Dataset:** {m.get('n_train', 0)} rows (Anomalies flagged in train: {m.get('n_train_anomalies', 0)})\n")
+        f.write(f"- **Testing Dataset:** {m.get('n_test', 0)} rows\n")
+
+        if "precision" in m:
+            f.write(f"- **Actual Test Anomalies:** {m['n_test_true_anomalies']}\n")
+            f.write(f"- **Predicted Test Anomalies:** {m['n_test_pred_anomalies']}\n\n")
+            
+            f.write("#### Confusion Matrix\n")
+            cm = m['confusion_matrix']
+            f.write("| | Predicted Normal (0) | Predicted Anomaly (1) |\n")
+            f.write("|---|---|---|\n")
+            f.write(f"| **Actual Normal (0)** | {cm['TN']} (True Negative) | {cm['FP']} (False Positive) |\n")
+            f.write(f"| **Actual Anomaly (1)** | {cm['FN']} (False Negative) | {cm['TP']} (True Positive) |\n\n")
+        else:
+            f.write(f"- *Metrics unavailable ({m.get('note', 'No test data')}).*\n\n")
+        
+        f.write("---\n\n")
+
+    f.write("## 3. Visualizations\n\n")
+    f.write("> *Tip: If you generate Matplotlib or Seaborn plots (like ROC curves or Feature Importance charts) during your run, save them as `.png` files in the `models/` directory. You can then reference them here directly (e.g., `![ROC Curve](roc_curve.png)`).*\n")
+
+print("\n✓ Training and evaluation report generation complete.")
